@@ -1,0 +1,24 @@
+# PyTorch（CUDA 12.6）
+# CPU 版本請改用: --extra-index-url https://download.pytorch.org/whl/cpu
+--extra-index-url https://download.pytorch.org/whl/cu126
+torch
+torchaudio
+
+# ASR 核心
+qwen-asr
+transformers>=4.41.0
+accelerate>=0.31.0
+
+# 語者分離
+pyannote.audio
+
+# 音訊處理
+numpy
+soundfile
+av
+
+# 繁簡轉換
+opencc-python-reimplemented
+
+# GUI
+customtkinter
