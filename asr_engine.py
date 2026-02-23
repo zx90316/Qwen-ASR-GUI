@@ -2,26 +2,25 @@
 """
 ASR 核心引擎
 封裝 Qwen ASR 轉錄、語者分離、合併邏輯，支援 GPU/CPU 與多模型切換。
+
+重型 ML 套件（qwen_asr, opencc, pyannote）採用延遲匯入，
+讓 GUI 能快速啟動。
 """
-import torch
-import numpy as np
-import soundfile as sf
 import bisect
 from dataclasses import replace as dc_replace
 from pathlib import Path
 from typing import List, Dict, Any, Callable, Optional
 
-from qwen_asr import Qwen3ASRModel
-from opencc import OpenCC
-from audio_utils import convert_to_wav, get_audio_duration, load_audio
-from config import RESULT_DIR, FORCED_ALIGNER, DIARIZATION_MODEL
 
-# 繁簡轉換器
-cc = OpenCC('s2twp')
+def _get_cc():
+    """延遲載入繁簡轉換器"""
+    from opencc import OpenCC
+    return OpenCC('s2twp')
 
 
 def detect_device() -> dict:
     """偵測可用裝置，回傳 device/dtype 設定"""
+    import torch
     if torch.cuda.is_available():
         return {"device": "cuda:0", "dtype": torch.bfloat16, "label": "CUDA GPU"}
     else:
@@ -49,6 +48,7 @@ class ASREngine:
         self._model = None
 
         # 裝置設定
+        import torch
         if device == "auto":
             info = detect_device()
             self.device = info["device"]
@@ -77,6 +77,9 @@ class ASREngine:
         if self._model is not None:
             return
 
+        from qwen_asr import Qwen3ASRModel
+        from config import FORCED_ALIGNER
+
         self._progress(5, f"載入模型 {self.model_name}...")
         self._model = Qwen3ASRModel.from_pretrained(
             self.model_name,
@@ -95,6 +98,7 @@ class ASREngine:
     def unload_model(self):
         """釋放模型記憶體"""
         if self._model is not None:
+            import torch
             del self._model
             self._model = None
             if torch.cuda.is_available():
@@ -114,6 +118,10 @@ class ASREngine:
         frame_duration: float = 0.02,
     ) -> List[tuple]:
         """依靜音段切分音訊，回傳各段 (start_sec, end_sec) 清單"""
+        import numpy as np
+        import soundfile as sf
+        from audio_utils import get_audio_duration
+
         total_duration = get_audio_duration(audio_path)
 
         if total_duration <= target_duration:
@@ -132,7 +140,7 @@ class ASREngine:
         # 計算每個 frame 的 RMS
         rms_values = []
         for i in range(num_frames):
-            frame = data[i * frame_size: (i + 1) * frame_size]
+            frame = data[i * frame_size : (i + 1) * frame_size]
             rms = np.sqrt(np.mean(frame ** 2))
             rms_values.append(rms)
 
@@ -225,6 +233,9 @@ class ASREngine:
         Returns:
             ASR 結果列表（時間戳已偏移修正）
         """
+        import soundfile as sf
+        from audio_utils import get_audio_duration
+
         total_duration = get_audio_duration(str(audio_path))
 
         # 短音訊直接整段處理
@@ -238,7 +249,6 @@ class ASREngine:
         chunks = self.split_audio_by_silence(str(audio_path), target_duration=target_duration)
         all_results = []
         result_dir = Path(audio_path).parent
-
         full_data, sr = sf.read(str(audio_path), dtype='float32')
 
         for i, (chunk_start, chunk_end) in enumerate(chunks):
@@ -290,7 +300,10 @@ class ASREngine:
         """執行語者分離"""
         self._progress(62, "載入語者分離模型...")
 
+        import torch
         from pyannote.audio import Pipeline
+        from audio_utils import load_audio
+        from config import DIARIZATION_MODEL
 
         pipeline = Pipeline.from_pretrained(
             DIARIZATION_MODEL,
@@ -447,8 +460,9 @@ class ASREngine:
 
         # Step 6: 繁體中文轉換
         if to_traditional:
+            converter = _get_cc()
             for seg in final:
-                seg["text"] = cc.convert(seg["text"])
+                seg["text"] = converter.convert(seg["text"])
 
         self._progress(90, f"合併完成：{len(final)} 個片段")
         return final
@@ -477,6 +491,9 @@ class ASREngine:
             合併結果 [{start, end, speaker, text}, ...]
         """
         try:
+            from audio_utils import convert_to_wav
+            from config import RESULT_DIR
+
             # Step 1: 轉換為 WAV
             self._progress(0, "轉換音訊格式...")
             result_dir = RESULT_DIR / "work"
@@ -511,6 +528,7 @@ class ASREngine:
 
         finally:
             self.unload_model()
+            self._progress(100, "完成")
 
     # ============================================
     # 匯出

@@ -130,8 +130,8 @@ class QwenASRApp(ctk.CTk):
         self.progress_bar.grid(row=0, column=0, sticky="ew", padx=(0, 8))
         self.progress_bar.set(0)
 
-        self.status_label = ctk.CTkLabel(progress_row, text="就緒", font=ctk.CTkFont(size=12))
-        self.status_label.grid(row=0, column=1, minsize=200)
+        self.status_label = ctk.CTkLabel(progress_row, text="就緒", font=ctk.CTkFont(size=12), width=200)
+        self.status_label.grid(row=0, column=1)
 
         # 按鈕
         self.run_btn = ctk.CTkButton(
