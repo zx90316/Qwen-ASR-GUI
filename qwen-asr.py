@@ -269,9 +269,11 @@ def diarization(audio_path):
     import torch
     from audio_utils import load_audio
 
+    import os
+    hf_token = os.environ.get("HF_TOKEN", "")
     pipeline = Pipeline.from_pretrained(
         "pyannote/speaker-diarization-community-1",
-        token="REMOVED_SECRET")
+        token=hf_token or None)
 
     pipeline.to(torch.device("cuda"))
     waveform, sample_rate = load_audio(str(audio_path))

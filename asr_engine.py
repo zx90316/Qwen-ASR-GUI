@@ -312,11 +312,11 @@ class ASREngine:
         import torch
         from pyannote.audio import Pipeline
         from audio_utils import load_audio
-        from config import DIARIZATION_MODEL
+        from config import DIARIZATION_MODEL, HF_TOKEN
 
         pipeline = Pipeline.from_pretrained(
             DIARIZATION_MODEL,
-            token="REMOVED_SECRET",
+            token=HF_TOKEN or None,
         )
 
         device = "cuda" if torch.cuda.is_available() else "cpu"

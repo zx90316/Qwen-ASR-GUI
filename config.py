@@ -2,7 +2,11 @@
 """
 Qwen-ASR-GUI 配置管理
 """
+import os
 from pathlib import Path
+
+# HuggingFace Token（從環境變數讀取）
+HF_TOKEN = os.environ.get("HF_TOKEN", "")
 
 # 路徑配置
 BASE_DIR = Path(__file__).parent
