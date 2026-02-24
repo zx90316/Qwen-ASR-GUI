@@ -4,8 +4,12 @@ Qwen-ASR-GUI 配置管理
 """
 import os
 from pathlib import Path
+from dotenv import load_dotenv
 
-# HuggingFace Token（從環境變數讀取）
+# 載入 .env 檔案
+load_dotenv()
+
+# HuggingFace Token（從 .env 或環境變數讀取）
 HF_TOKEN = os.environ.get("HF_TOKEN", "")
 
 # 路徑配置

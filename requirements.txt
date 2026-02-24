@@ -22,3 +22,6 @@ opencc-python-reimplemented
 
 # GUI
 customtkinter
+
+# 環境變數
+python-dotenv

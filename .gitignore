@@ -9,3 +9,11 @@ build/
 *.exe
 .env
 *.egg-info/
+
+# 音訊檔案（避免大檔進入 repo）
+*.mp3
+*.wav
+
+# IDE
+.vscode/
+.idea/

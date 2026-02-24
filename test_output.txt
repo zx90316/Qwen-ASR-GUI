@@ -1,9 +1,0 @@
-Test 1: Match=True
-  专注产业，透视未来，欢迎来到透视未来。今天我跟创办人小七，我们一起来到位于彰化的车辆安全审验中心VSSC哈。
-
-Test 2: Result=你好，世界。  commas=1 periods=1
-
-Test 3: Match=True
-  你好，我很好。
-
-Test 4: Result=ABC哈。  commas=0 periods=1
