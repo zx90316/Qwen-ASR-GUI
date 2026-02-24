@@ -1,6 +1,6 @@
 # PyTorch（CUDA 12.6）
 # CPU 版本請改用: --extra-index-url https://download.pytorch.org/whl/cpu
---extra-index-url https://download.pytorch.org/whl/cu126
+--extra-index-url https://download.pytorch.org/whl/cu128
 torch
 torchaudio
 
