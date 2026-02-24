@@ -7,9 +7,18 @@ ASR 核心引擎
 讓 GUI 能快速啟動。
 """
 import bisect
+import unicodedata
 from dataclasses import replace as dc_replace
 from pathlib import Path
 from typing import List, Dict, Any, Callable, Optional
+
+
+def _is_punctuation(ch: str) -> bool:
+    """判斷字元是否為標點符號（中英文皆涵蓋）"""
+    if ch in '，。！？、；：＂＇（）《》【】…—·,.:;!?\'"()[]{}~@#$%^&*+-=/<>':
+        return True
+    cat = unicodedata.category(ch)
+    return cat.startswith("P")
 
 
 def _get_cc():
@@ -349,22 +358,66 @@ class ASREngine:
                 text = cc.convert(text)
             return [{"start": 0.0, "end": 0.0, "speaker": "UNKNOWN", "text": text}]
 
-        # Step 1: 取出所有字元時間戳
+        # Step 1: 取出所有字元時間戳，並從原文還原標點符號
         chars = []
         for r in asr_results:
             if not hasattr(r, "time_stamps") or not r.time_stamps:
                 continue
+
+            # 取得對齊字元列表
+            aligned_chars = []
             for ts in r.time_stamps:
                 char_text = getattr(ts, "text", "")
                 start_time = getattr(ts, "start_time", None)
                 end_time = getattr(ts, "end_time", None)
                 if start_time is None or end_time is None:
                     continue
-                chars.append({
+                aligned_chars.append({
                     "text": char_text,
                     "start": float(start_time),
                     "end": float(end_time),
                 })
+
+            # 從原文 text 還原標點符號
+            # 對齊字元可能是多字元 token（如 VSSC），需用子索引追蹤
+            original_text = getattr(r, "text", "") or ""
+            if original_text and aligned_chars:
+                ai = 0   # aligned_chars 指標
+                si = 0   # 當前 aligned token 內的子索引
+                mismatch_count = 0  # 連續不匹配計數
+
+                trailing = False  # 是否已進入尾部追蹤模式
+
+                for ch in original_text:
+                    if ai >= len(aligned_chars):
+                        # 所有 token 已匹配完，只處理緊接的尾部標點
+                        if not trailing:
+                            trailing = True
+                        if trailing and _is_punctuation(ch):
+                            aligned_chars[-1]["text"] += ch
+                        elif trailing:
+                            break  # 遇到非標點即停止
+                        continue
+
+                    token_text = aligned_chars[ai]["text"]
+
+                    if si < len(token_text) and ch == token_text[si]:
+                        # 匹配到當前 token 內的字元
+                        si += 1
+                        mismatch_count = 0
+                        if si >= len(token_text):
+                            # 整個 token 匹配完成，移到下一個
+                            ai += 1
+                            si = 0
+                    elif _is_punctuation(ch):
+                        # 只在同步狀態下附加標點（連續不匹配 < 1 即停止）
+                        if mismatch_count == 0 and ai > 0:
+                            aligned_chars[ai - 1]["text"] += ch
+                    else:
+                        # 非標點的不匹配字元，累計計數
+                        mismatch_count += 1
+
+            chars.extend(aligned_chars)
 
         if not chars:
             text = "".join(r.text for r in asr_results)
