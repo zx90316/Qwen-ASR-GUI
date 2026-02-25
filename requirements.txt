@@ -20,8 +20,11 @@ av
 # 繁簡轉換
 opencc-python-reimplemented
 
-# GUI
-customtkinter
+# Web 後端
+fastapi
+uvicorn[standard]
+sqlalchemy
+python-multipart
 
 # 環境變數
 python-dotenv
