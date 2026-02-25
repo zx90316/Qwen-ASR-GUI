@@ -226,6 +226,58 @@ async def youtube_task_progress(task_id: int, db: Session = Depends(get_db)):
         },
     )
 
+@router.get("/{task_id}/export/{format_type}")
+def export_youtube_task(task_id: int, format_type: str, db: Session = Depends(get_db)):
+    """
+    匯出 YouTube 任務結果
+    format_type: txt / srt
+    """
+    import io
+    import urllib.parse
+    task = db.query(YouTubeTask).filter(YouTubeTask.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="任務不存在")
+    if task.status != "completed":
+        raise HTTPException(status_code=400, detail="任務尚未完成")
+
+    sentences = task.get_sentences()
+    base_name = task.video_title or f"youtube_{task.video_id}"
+    # Sanitizing filename
+    base_name = "".join([c for c in base_name if c.isalpha() or c.isdigit() or c==' ']).rstrip()
+    if not base_name:
+        base_name = "export"
+
+    buf = io.StringIO()
+
+    if format_type == "txt":
+        for sent in sentences:
+            start = ASREngine.format_time(sent["start"])
+            end = ASREngine.format_time(sent["end"])
+            buf.write(f"{start} → {end}\n{sent['text']}\n\n")
+        filename = f"{base_name}_subtitle.txt"
+        media_type = "text/plain"
+
+    elif format_type == "srt":
+        for idx, seg in enumerate(sentences, 1):
+            start_srt = ASREngine.format_srt_time(seg["start"])
+            end_srt = ASREngine.format_srt_time(seg["end"])
+            text = seg["text"]
+            buf.write(f"{idx}\n{start_srt} --> {end_srt}\n{text}\n\n")
+        filename = f"{base_name}.srt"
+        media_type = "text/srt"
+    else:
+        raise HTTPException(status_code=400, detail=f"不支援的格式: {format_type}")
+
+    buf.seek(0)
+    content = buf.getvalue().encode("utf-8-sig")
+
+    encoded_filename = urllib.parse.quote(filename)
+    return StreamingResponse(
+        io.BytesIO(content),
+        media_type=media_type,
+        headers={"Content-Disposition": f"attachment; filename*=utf-8''{encoded_filename}"},
+    )
+
 
 # ============================================
 # 背景處理

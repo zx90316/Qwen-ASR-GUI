@@ -972,8 +972,8 @@ a:hover {
   display: flex;
   flex-direction: column;
   height: 0;
-  min-height: 480px;
-  max-height: 70vh;
+  min-height: -webkit-fill-available;
+  max-height: -webkit-fill-available;
   box-shadow: var(--shadow-sm);
 }
 
@@ -1040,14 +1040,81 @@ a:hover {
 }
 
 .subsync-subtitle-text {
+  flex: 1;
   font-size: 0.88rem;
   line-height: 1.55;
   color: var(--color-text);
+  min-width: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.subsync-subtitle-text-original {
+  font-size: 0.82rem;
+  color: var(--color-text-muted);
+  text-decoration: line-through;
+  margin-bottom: 2px;
+}
+
+.subsync-subtitle-text-editor {
+  width: 100%;
+  font-size: 0.88rem;
+  line-height: 1.55;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  font-family: var(--font-sans);
+  resize: vertical;
+  min-height: 40px;
 }
 
 .subsync-subtitle-line.active .subsync-subtitle-text {
   font-weight: 600;
   color: var(--color-text);
+}
+
+/* ── LLM 工具列 ── */
+.subsync-llm-toolbar {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-md);
+  margin-bottom: var(--space-md);
+  display: flex;
+  gap: var(--space-md);
+  align-items: flex-end;
+  flex-wrap: wrap;
+  box-shadow: var(--shadow-sm);
+}
+
+.subsync-llm-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-width: 150px;
+}
+
+.subsync-llm-actions {
+  display: flex;
+  gap: var(--space-sm);
+  margin-left: auto;
+}
+
+.subsync-llm-progress-bar {
+  width: 100%;
+  height: 4px;
+  background: var(--color-border-light);
+  border-radius: 2px;
+  margin-top: 8px;
+  overflow: hidden;
+}
+
+.subsync-llm-progress-fill {
+  height: 100%;
+  background: var(--color-accent);
+  transition: width 0.3s ease;
 }
 
 /* 字幕面板滾動條 */

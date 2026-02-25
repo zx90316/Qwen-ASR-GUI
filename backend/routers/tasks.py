@@ -264,10 +264,12 @@ def export_task(task_id: int, format_type: str, variant: str = "merged", db: Ses
     buf.seek(0)
     content = buf.getvalue().encode("utf-8-sig")
 
+    import urllib.parse
+    encoded_filename = urllib.parse.quote(filename)
     return StreamingResponse(
         io.BytesIO(content),
         media_type=media_type,
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": f"attachment; filename*=utf-8''{encoded_filename}"},
     )
 
 
