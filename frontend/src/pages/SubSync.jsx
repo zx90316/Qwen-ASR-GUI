@@ -75,6 +75,7 @@ export default function SubSync() {
     const [activeIndex, setActiveIndex] = useState(-1)
     const [error, setError] = useState('')
     const [history, setHistory] = useState([])
+    const [offset, setOffset] = useState(0)
     const [searchParams, setSearchParams] = useSearchParams()
 
     const playerRef = useRef(null)
@@ -86,6 +87,7 @@ export default function SubSync() {
     // ── 避免閉包陷阱的 Ref ──
     const sentencesRef = useRef([])
     const activeIndexRef = useRef(-1)
+    const offsetRef = useRef(0)
 
     useEffect(() => {
         sentencesRef.current = sentences
@@ -94,6 +96,10 @@ export default function SubSync() {
     useEffect(() => {
         activeIndexRef.current = activeIndex
     }, [activeIndex])
+
+    useEffect(() => {
+        offsetRef.current = offset
+    }, [offset])
 
     // ── 載入配置與歷史紀錄 ──
     const fetchHistory = useCallback(async () => {
@@ -276,7 +282,7 @@ export default function SubSync() {
         if (!playerRef.current || !playerRef.current.getCurrentTime) return
         try {
             const currentTime = playerRef.current.getCurrentTime()
-            const idx = findActiveSubtitle(sentencesRef.current, currentTime)
+            const idx = findActiveSubtitle(sentencesRef.current, currentTime - offsetRef.current)
             if (idx !== activeIndexRef.current) {
                 setActiveIndex(idx)
             }
@@ -499,9 +505,23 @@ export default function SubSync() {
                         <h3 className="subsync-video-title">
                             {videoTitle || '影片'}
                         </h3>
-                        <button className="btn btn-outline btn-sm" onClick={handleReset}>
-                            ← 新分析
-                        </button>
+                        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                            <div className="subsync-offset-control" style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'var(--color-surface-hover)', padding: '4px 10px', borderRadius: 'var(--radius-sm)' }}>
+                                <label style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>時間微調 (秒)</label>
+                                <input
+                                    type="number"
+                                    step="0.1"
+                                    className="form-input"
+                                    style={{ width: '70px', padding: '2px 8px', height: '28px', fontSize: '0.9rem' }}
+                                    value={offset}
+                                    onChange={e => setOffset(parseFloat(e.target.value) || 0)}
+                                    title="正數讓字幕延後，負數讓字幕提前"
+                                />
+                            </div>
+                            <button className="btn btn-outline btn-sm" onClick={handleReset}>
+                                ← 新分析
+                            </button>
+                        </div>
                     </div>
 
                     <div className="subsync-player-container">
