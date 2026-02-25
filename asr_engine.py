@@ -7,6 +7,7 @@ ASR 核心引擎
 讓 GUI 能快速啟動。
 """
 import bisect
+import time
 import unicodedata
 from dataclasses import replace as dc_replace
 from pathlib import Path
@@ -425,82 +426,117 @@ class ASREngine:
                 text = cc.convert(text)
             return [{"start": 0.0, "end": 0.0, "speaker": "UNKNOWN", "text": text}]
 
-        # Step 2: 為每個字元匹配語者
-        diar_starts = [d["start"] for d in diar_segments]
-        last_speaker = diar_segments[0]["speaker"]
+        # Step 2: 將字元切分為句子（以標點為斷點）
+        sentence_end_chars = set('。！？!?')
+        comma_chars = set('，,')
+        max_sentence_chars = 30
+        force_cut_chars = 50
+
+        sentences_from_chars = []  # [{start, end, text, chars_list}, ...]
+        buf_chars = []
 
         for char in chars:
-            char_mid = (char["start"] + char["end"]) / 2
-            speaker = None
+            buf_chars.append(char)
+            ch = char["text"]
 
-            idx = bisect.bisect_right(diar_starts, char_mid) - 1
-            if idx >= 0:
-                for i in range(max(0, idx - 1), min(len(diar_segments), idx + 2)):
-                    d = diar_segments[i]
-                    if d["start"] <= char_mid <= d["end"]:
-                        speaker = d["speaker"]
-                        last_speaker = speaker
-                        break
+            should_cut = False
+            # 句末標點斷句
+            if len(ch) == 1 and ch in sentence_end_chars:
+                should_cut = True
+            elif len(ch) > 1 and ch[-1] in sentence_end_chars:
+                should_cut = True
+            # 逗號補切（超過 max_sentence_chars）
+            buf_text_len = sum(len(c["text"]) for c in buf_chars)
+            if not should_cut and buf_text_len >= max_sentence_chars:
+                if len(ch) == 1 and ch in comma_chars:
+                    should_cut = True
+                elif len(ch) > 1 and ch[-1] in comma_chars:
+                    should_cut = True
+            # 強制切斷
+            if not should_cut and buf_text_len >= force_cut_chars:
+                should_cut = True
 
-            if speaker is None:
+            if should_cut and buf_chars:
+                sentences_from_chars.append({
+                    "start": buf_chars[0]["start"],
+                    "end": buf_chars[-1]["end"],
+                    "text": "".join(c["text"] for c in buf_chars),
+                })
+                buf_chars = []
+
+        # 處理剩餘
+        if buf_chars:
+            sentences_from_chars.append({
+                "start": buf_chars[0]["start"],
+                "end": buf_chars[-1]["end"],
+                "text": "".join(c["text"] for c in buf_chars),
+            })
+
+        if not sentences_from_chars:
+            text = "".join(r.text for r in asr_results)
+            if to_traditional:
+                converter = _get_cc()
+                text = converter.convert(text)
+            return [{"start": 0.0, "end": 0.0, "speaker": "UNKNOWN", "text": text}]
+
+        # Step 3: 為每個句子匹配語者（依時間重疊比例）
+        last_speaker = diar_segments[0]["speaker"]
+
+        for sent in sentences_from_chars:
+            sent_start = sent["start"]
+            sent_end = sent["end"]
+            sent_duration = sent_end - sent_start
+
+            if sent_duration <= 0:
+                sent["speaker"] = last_speaker
+                continue
+
+            # 計算每個語者與此句子的時間重疊量
+            speaker_overlap = {}
+            for d in diar_segments:
+                overlap_start = max(sent_start, d["start"])
+                overlap_end = min(sent_end, d["end"])
+                overlap = max(0.0, overlap_end - overlap_start)
+                if overlap > 0:
+                    spk = d["speaker"]
+                    speaker_overlap[spk] = speaker_overlap.get(spk, 0.0) + overlap
+
+            if speaker_overlap:
+                # 選擇重疊量最大的語者
+                best_speaker = max(speaker_overlap, key=speaker_overlap.get)
+                sent["speaker"] = best_speaker
+                last_speaker = best_speaker
+            else:
+                # 無重疊時使用最近的語者
+                sent_mid = (sent_start + sent_end) / 2
                 min_dist = float("inf")
+                nearest_speaker = last_speaker
                 for d in diar_segments:
-                    if char_mid < d["start"]:
-                        dist = d["start"] - char_mid
-                    elif char_mid > d["end"]:
-                        dist = char_mid - d["end"]
+                    if sent_mid < d["start"]:
+                        dist = d["start"] - sent_mid
+                    elif sent_mid > d["end"]:
+                        dist = sent_mid - d["end"]
                     else:
                         dist = 0
                     if dist < min_dist:
                         min_dist = dist
-                        speaker = d["speaker"]
-                if min_dist > 2.0:
-                    speaker = last_speaker
+                        nearest_speaker = d["speaker"]
+                if min_dist <= 2.0:
+                    sent["speaker"] = nearest_speaker
+                    last_speaker = nearest_speaker
                 else:
-                    last_speaker = speaker
+                    sent["speaker"] = last_speaker
 
-            char["speaker"] = speaker
-
-        # Step 3: 按語者分組
-        raw_segments = []
-        current_speaker = chars[0]["speaker"]
-        current_text = chars[0]["text"]
-        current_start = chars[0]["start"]
-        current_end = chars[0]["end"]
-
-        for char in chars[1:]:
-            if char["speaker"] == current_speaker:
-                current_text += char["text"]
-                current_end = char["end"]
-            else:
-                raw_segments.append({
-                    "start": current_start,
-                    "end": current_end,
-                    "speaker": current_speaker,
-                    "text": current_text,
-                })
-                current_speaker = char["speaker"]
-                current_text = char["text"]
-                current_start = char["start"]
-                current_end = char["end"]
-
-        raw_segments.append({
-            "start": current_start,
-            "end": current_end,
-            "speaker": current_speaker,
-            "text": current_text,
-        })
-
-        # Step 4: 合併相鄰同語者
-        merged = [raw_segments[0].copy()]
-        for seg in raw_segments[1:]:
+        # Step 4: 合併相鄰同語者句子
+        merged = [sentences_from_chars[0].copy()]
+        for sent in sentences_from_chars[1:]:
             prev = merged[-1]
-            time_gap = seg["start"] - prev["end"]
-            if seg["speaker"] == prev["speaker"] and time_gap < gap_threshold:
-                prev["end"] = seg["end"]
-                prev["text"] += seg["text"]
+            time_gap = sent["start"] - prev["end"]
+            if sent["speaker"] == prev["speaker"] and time_gap < gap_threshold:
+                prev["end"] = sent["end"]
+                prev["text"] += sent["text"]
             else:
-                merged.append(seg.copy())
+                merged.append(sent.copy())
 
         # Step 5: 過濾雜訊
         final = []
@@ -524,13 +560,96 @@ class ASREngine:
     # 完整流程
     # ============================================
 
+    @staticmethod
+    def split_sentences(
+        segments: List[Dict[str, Any]],
+        max_chars: int = 30,
+        force_chars: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """
+        將合併結果分句，產生適合字幕的單句片段。
+
+        策略：
+        - 句末標點（。！？!?）為主要斷點
+        - 超過 max_chars 字在逗號（，,）處補切
+        - 超過 force_chars 字完全無標點則強制切斷
+
+        Args:
+            segments: 合併後的結果 [{start, end, text, ...}]
+            max_chars: 逗號補切門檻
+            force_chars: 強制切斷門檻
+
+        Returns:
+            [{start, end, text}, ...]
+        """
+        sentence_end = set('。！？!?')
+        comma_chars = set('，,')
+        sentences = []
+
+        for seg in segments:
+            text = seg["text"]
+            if not text.strip():
+                continue
+
+            seg_start = seg["start"]
+            seg_end = seg["end"]
+            seg_duration = seg_end - seg_start
+            total_chars = len(text)
+
+            if total_chars == 0:
+                continue
+
+            # 以字元數比例插值估算每個字的時間
+            char_duration = seg_duration / total_chars
+
+            buf = ""
+            buf_start_idx = 0  # 緩衝區起始字元索引
+
+            for i, ch in enumerate(text):
+                buf += ch
+
+                should_cut = False
+
+                # 規則1: 句末標點
+                if ch in sentence_end:
+                    should_cut = True
+                # 規則2: 超過 max_chars 且遇到逗號
+                elif len(buf) >= max_chars and ch in comma_chars:
+                    should_cut = True
+                # 規則3: 超過 force_chars 強制切斷
+                elif len(buf) >= force_chars:
+                    should_cut = True
+
+                if should_cut:
+                    s_start = seg_start + buf_start_idx * char_duration
+                    s_end = seg_start + (i + 1) * char_duration
+                    sentences.append({
+                        "start": round(s_start, 3),
+                        "end": round(s_end, 3),
+                        "text": buf.strip(),
+                    })
+                    buf = ""
+                    buf_start_idx = i + 1
+
+            # 處理剩餘文字
+            if buf.strip():
+                s_start = seg_start + buf_start_idx * char_duration
+                s_end = seg_end
+                sentences.append({
+                    "start": round(s_start, 3),
+                    "end": round(s_end, 3),
+                    "text": buf.strip(),
+                })
+
+        return sentences
+
     def run(
         self,
         input_path: str,
         language: str = "Chinese",
         enable_diarization: bool = True,
         to_traditional: bool = True,
-    ) -> List[Dict[str, Any]]:
+    ) -> Dict[str, Any]:
         """
         完整 ASR 流程：轉檔 → 分段轉錄 → 語者分離 → 合併
 
@@ -541,7 +660,11 @@ class ASREngine:
             to_traditional: 是否轉為繁體中文
 
         Returns:
-            合併結果 [{start, end, speaker, text}, ...]
+            {
+                "merged": [{start, end, speaker, text}, ...],
+                "raw_text": str,
+                "sentences": [{start, end, text}, ...],
+            }
         """
         try:
             from audio_utils import convert_to_wav
@@ -563,6 +686,11 @@ class ASREngine:
             self.load_model()
             asr_results = self.transcribe(str(wav_path), language=language)
 
+            # 取得原始 ASR 全文
+            raw_text = "".join(r.text for r in asr_results)
+            if to_traditional:
+                raw_text = _get_cc().convert(raw_text)
+
             # Step 3: 語者分離（可選）
             if enable_diarization:
                 diar_segments = self.diarize(str(wav_path))
@@ -576,8 +704,15 @@ class ASREngine:
                 to_traditional=to_traditional,
             )
 
+            # Step 5: 分句（適合字幕）
+            sentences = self.split_sentences(segments)
+
             self._progress(95, "處理完成")
-            return segments
+            return {
+                "merged": segments,
+                "raw_text": raw_text,
+                "sentences": sentences,
+            }
 
         finally:
             self.unload_model()
@@ -635,4 +770,31 @@ class ASREngine:
                     f.write(f"[{speaker}] {text}\n")
                 else:
                     f.write(f"{text}\n")
+                f.write("\n")
+
+    @staticmethod
+    def export_raw_txt(raw_text: str, output_path: str):
+        """匯出原始 ASR 全文（純文字，不含時間/語者）"""
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(raw_text)
+
+    @classmethod
+    def export_subtitle_txt(cls, sentences: List[Dict], output_path: str):
+        """匯出 YouTube 風格字幕（時間戳+文字交錯）"""
+        with open(output_path, "w", encoding="utf-8") as f:
+            for sent in sentences:
+                start = cls.format_time(sent["start"])
+                f.write(f"{start}\n")
+                f.write(f"{sent['text']}\n")
+
+    @classmethod
+    def export_subtitle_srt(cls, sentences: List[Dict], output_path: str):
+        """匯出單句 SRT 字幕（適合上字幕）"""
+        with open(output_path, "w", encoding="utf-8") as f:
+            for i, sent in enumerate(sentences, 1):
+                start = cls.format_srt_time(sent["start"])
+                end = cls.format_srt_time(sent["end"])
+                f.write(f"{i}\n")
+                f.write(f"{start} --> {end}\n")
+                f.write(f"{sent['text']}\n")
                 f.write("\n")
