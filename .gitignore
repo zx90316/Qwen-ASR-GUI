@@ -19,3 +19,4 @@ build/
 .idea/
 frontend/node_modules
 ffmpeg-master-latest-win64-gpl-shared
+qwen_asr.db

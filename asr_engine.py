@@ -96,7 +96,7 @@ class ASREngine:
             dtype=self.dtype,
             device_map=self.device,
             max_inference_batch_size=32,
-            max_new_tokens=2048,
+            max_new_tokens=8096,
             forced_aligner=FORCED_ALIGNER,
             forced_aligner_kwargs=dict(
                 dtype=self.dtype,
@@ -275,6 +275,9 @@ class ASREngine:
             # ASR 轉錄
             chunk_results = self._transcribe_single(str(chunk_path), language)
 
+            # 計算精確的時間戳偏移（避免 float 捨去誤差）
+            exact_chunk_start = start_sample / sr
+
             # 修正時間戳偏移
             for r in chunk_results:
                 if hasattr(r, 'time_stamps') and r.time_stamps:
@@ -282,9 +285,9 @@ class ASREngine:
                     for ts in r.time_stamps:
                         kwargs = {}
                         if hasattr(ts, 'start_time') and ts.start_time is not None:
-                            kwargs['start_time'] = ts.start_time + chunk_start
+                            kwargs['start_time'] = ts.start_time + exact_chunk_start
                         if hasattr(ts, 'end_time') and ts.end_time is not None:
-                            kwargs['end_time'] = ts.end_time + chunk_start
+                            kwargs['end_time'] = ts.end_time + exact_chunk_start
                         if kwargs:
                             new_timestamps.append(dc_replace(ts, **kwargs))
                         else:
@@ -455,8 +458,15 @@ class ASREngine:
                 should_cut = True
 
             if should_cut and buf_chars:
+                # 尋找真正有字元的第一個元素做為 start (避免標點符號開頭導致時間不準)
+                valid_start = buf_chars[0]["start"]
+                for c in buf_chars:
+                    if c["text"].strip() and c["end"] > c["start"]:
+                        valid_start = c["start"]
+                        break
+                        
                 sentences_from_chars.append({
-                    "start": buf_chars[0]["start"],
+                    "start": valid_start,
                     "end": buf_chars[-1]["end"],
                     "text": "".join(c["text"] for c in buf_chars),
                 })
@@ -464,8 +474,14 @@ class ASREngine:
 
         # 處理剩餘
         if buf_chars:
+            valid_start = buf_chars[0]["start"]
+            for c in buf_chars:
+                if c["text"].strip() and c["end"] > c["start"]:
+                    valid_start = c["start"]
+                    break
+                    
             sentences_from_chars.append({
-                "start": buf_chars[0]["start"],
+                "start": valid_start,
                 "end": buf_chars[-1]["end"],
                 "text": "".join(c["text"] for c in buf_chars),
             })
@@ -525,12 +541,13 @@ class ASREngine:
                 else:
                     sent["speaker"] = last_speaker
 
-        # Step 4: 合併相鄰同語者句子
+        # Step 4: 合併相鄰的極短碎片 (例如只有 1~2 字的孤立片段，若與前句距離極近則合併)
         merged = [sentences_from_chars[0].copy()]
         for sent in sentences_from_chars[1:]:
             prev = merged[-1]
             time_gap = sent["start"] - prev["end"]
-            if sent["speaker"] == prev["speaker"] and time_gap < gap_threshold:
+            # 只在片段過短 (< 5 字) 且時間非常近時才合併，保留原始句子結構
+            if sent["speaker"] == prev["speaker"] and time_gap < 0.2 and len(sent["text"]) < 5 and len(prev["text"]) < 40:
                 prev["end"] = sent["end"]
                 prev["text"] += sent["text"]
             else:
@@ -557,89 +574,6 @@ class ASREngine:
     # ============================================
     # 完整流程
     # ============================================
-
-    @staticmethod
-    def split_sentences(
-        segments: List[Dict[str, Any]],
-        max_chars: int = 30,
-        force_chars: int = 50,
-    ) -> List[Dict[str, Any]]:
-        """
-        將合併結果分句，產生適合字幕的單句片段。
-
-        策略：
-        - 句末標點（。！？!?）為主要斷點
-        - 超過 max_chars 字在逗號（，,）處補切
-        - 超過 force_chars 字完全無標點則強制切斷
-
-        Args:
-            segments: 合併後的結果 [{start, end, text, ...}]
-            max_chars: 逗號補切門檻
-            force_chars: 強制切斷門檻
-
-        Returns:
-            [{start, end, text}, ...]
-        """
-        sentence_end = set('。！？!?')
-        comma_chars = set('，,')
-        sentences = []
-
-        for seg in segments:
-            text = seg["text"]
-            if not text.strip():
-                continue
-
-            seg_start = seg["start"]
-            seg_end = seg["end"]
-            seg_duration = seg_end - seg_start
-            total_chars = len(text)
-
-            if total_chars == 0:
-                continue
-
-            # 以字元數比例插值估算每個字的時間
-            char_duration = seg_duration / total_chars
-
-            buf = ""
-            buf_start_idx = 0  # 緩衝區起始字元索引
-
-            for i, ch in enumerate(text):
-                buf += ch
-
-                should_cut = False
-
-                # 規則1: 句末標點
-                if ch in sentence_end:
-                    should_cut = True
-                # 規則2: 超過 max_chars 且遇到逗號
-                elif len(buf) >= max_chars and ch in comma_chars:
-                    should_cut = True
-                # 規則3: 超過 force_chars 強制切斷
-                elif len(buf) >= force_chars:
-                    should_cut = True
-
-                if should_cut:
-                    s_start = seg_start + buf_start_idx * char_duration
-                    s_end = seg_start + (i + 1) * char_duration
-                    sentences.append({
-                        "start": round(s_start, 3),
-                        "end": round(s_end, 3),
-                        "text": buf.strip(),
-                    })
-                    buf = ""
-                    buf_start_idx = i + 1
-
-            # 處理剩餘文字
-            if buf.strip():
-                s_start = seg_start + buf_start_idx * char_duration
-                s_end = seg_end
-                sentences.append({
-                    "start": round(s_start, 3),
-                    "end": round(s_end, 3),
-                    "text": buf.strip(),
-                })
-
-        return sentences
 
     def run(
         self,
@@ -702,14 +636,11 @@ class ASREngine:
                 to_traditional=to_traditional,
             )
 
-            # Step 5: 分句（適合字幕）
-            sentences = self.split_sentences(segments)
-
             self._progress(95, "處理完成")
             return {
                 "merged": segments,
                 "raw_text": raw_text,
-                "sentences": sentences,
+                "sentences": segments,
             }
 
         finally:
