@@ -78,6 +78,18 @@ export default function SubSync() {
     const [offset, setOffset] = useState(0)
     const [searchParams, setSearchParams] = useSearchParams()
 
+    // ── LLM 潤飾/翻譯狀態 ──
+    const [llmProviders, setLlmProviders] = useState({})
+    const [llmProvider, setLlmProvider] = useState('')
+    const [llmModel, setLlmModel] = useState('')
+    const [llmAction, setLlmAction] = useState('polish') // polish | translate
+    const [llmProgress, setLlmProgress] = useState(-1) // -1 尚未開始, 0-100 進度
+    const [llmError, setLlmError] = useState('')
+    const [llmCustomPrompt, setLlmCustomPrompt] = useState('')
+    const [showCustomPrompt, setShowCustomPrompt] = useState(false)
+    const [editingIndex, setEditingIndex] = useState(-1)
+    const [editValue, setEditValue] = useState('')
+
     const playerRef = useRef(null)
     const playerContainerRef = useRef(null)
     const timerRef = useRef(null)
@@ -109,13 +121,29 @@ export default function SubSync() {
         } catch { }
     }, [])
 
+    const fetchLlmProviders = useCallback(async () => {
+        try {
+            const r = await fetch('/api/llm/providers')
+            if (r.ok) {
+                const data = await r.json()
+                setLlmProviders(data)
+                const providers = Object.keys(data)
+                if (providers.length > 0) {
+                    setLlmProvider(providers[0])
+                    setLlmModel(data[providers[0]][0] || '')
+                }
+            }
+        } catch { }
+    }, [])
+
     useEffect(() => {
         fetch('/api/config')
             .then(r => r.json())
             .then(setConfig)
             .catch(() => { })
         fetchHistory()
-    }, [fetchHistory])
+        fetchLlmProviders()
+    }, [fetchHistory, fetchLlmProviders])
 
     // ── URL 參數載入 ──
     useEffect(() => {
@@ -330,7 +358,160 @@ export default function SubSync() {
         fetchHistory()
     }
 
-    // ── 刪除歷史紀錄 ──
+    // ── LLM 執行邏輯 ──
+    const handleLlmProcess = async () => {
+        if (!taskId || !llmProvider || !llmModel) return
+        setLlmProgress(0)
+        setLlmError('')
+        setEditingIndex(-1)
+
+        try {
+            const resp = await fetch('/api/llm/process', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    task_id: taskId,
+                    provider: llmProvider,
+                    model: llmModel,
+                    action: llmAction,
+                    custom_prompt: showCustomPrompt ? llmCustomPrompt : ""
+                })
+            })
+
+            if (!resp.ok) throw new Error('啟動 LLM 處理失敗')
+
+            // Instead of dealing with chunk parsing manually which can be complex,
+            // We use EventSource mechanism or fetch reader
+            const reader = resp.body.getReader()
+            const decoder = new TextDecoder()
+
+            let buffer = ""
+            while (true) {
+                const { value, done } = await reader.read()
+                if (done) break
+                buffer += decoder.decode(value, { stream: true })
+
+                // Parse SSE
+                const parts = buffer.split('\n\n')
+                buffer = parts.pop() || ""
+
+                for (const part of parts) {
+                    if (part.startsWith('data: ')) {
+                        try {
+                            const data = JSON.parse(part.substring(6))
+                            setLlmProgress(data.percent)
+
+                            if (data.done) {
+                                if (data.sentences) {
+                                    setSentences(data.sentences)
+                                }
+                                if (data.cancelled) {
+                                    setLlmError('已中斷處理')
+                                }
+                                setTimeout(() => setLlmProgress(-1), 1000)
+                            } else {
+                                // Update specific sentence in place
+                                setSentences(prev => {
+                                    const next = [...prev]
+                                    const curr = next[data.index]
+                                    next[data.index] = {
+                                        ...curr,
+                                        original_text: curr.original_text !== undefined ? curr.original_text : curr.text,
+                                        text: data.processed_text
+                                    }
+                                    return next
+                                })
+                            }
+                        } catch (e) { console.error('SSE JSON parse error', e) }
+                    }
+                }
+            }
+        } catch (e) {
+            setLlmError(e.message)
+            setLlmProgress(-1)
+        }
+    }
+
+    // ── 中斷 LLM 處理 ──
+    const handleLlmCancel = async () => {
+        if (!taskId) return
+        try {
+            await fetch('/api/llm/cancel', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ task_id: taskId })
+            })
+        } catch (e) { console.error('中斷失敗', e) }
+    }
+
+    // ── 匯出處理 ──
+    const handleExport = (format) => {
+        if (!taskId) return
+        window.open(`/api/youtube/${taskId}/export/${format}`, '_blank')
+    }
+
+    // ── 保存最終字幕 ──
+    const handleSaveSentences = async () => {
+        if (!taskId) return
+        try {
+            const resp = await fetch('/api/llm/save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    task_id: taskId,
+                    sentences: sentences
+                })
+            })
+            if (resp.ok) {
+                alert('字幕儲存成功！')
+                fetchHistory()
+            }
+        } catch { }
+    }
+
+    // ── 手動微調處理 ──
+    const startEdit = (idx, currentText) => {
+        setEditingIndex(idx)
+        setEditValue(currentText)
+    }
+
+    const saveEdit = (idx) => {
+        setSentences(prev => {
+            const next = [...prev]
+            if (next[idx].original_text === undefined && next[idx].text !== editValue) {
+                next[idx].original_text = next[idx].text
+            }
+            next[idx].text = editValue
+            return next
+        })
+        setEditingIndex(-1)
+    }
+
+    const handleRevertEdit = (e, idx) => {
+        e.stopPropagation()
+        setSentences(prev => {
+            const next = [...prev]
+            if (next[idx].original_text !== undefined) {
+                next[idx].text = next[idx].original_text
+                delete next[idx].original_text
+            }
+            return next
+        })
+    }
+
+    const handleRevertAll = () => {
+        if (!confirm('確定要復原所有字幕到最原始狀態嗎？此操作無法撤銷。')) return
+        setSentences(prev => {
+            return prev.map(s => {
+                if (s.original_text !== undefined) {
+                    const newS = { ...s, text: s.original_text }
+                    delete newS.original_text
+                    return newS
+                }
+                return s
+            })
+        })
+    }
     const handleDeleteHistory = async (e, id) => {
         e.stopPropagation()
         if (!confirm('確定要刪除此紀錄？')) return
@@ -534,41 +715,179 @@ export default function SubSync() {
                             {/* 重點提詞區域 (Teleprompter) */}
                             <div className="subsync-teleprompter">
                                 <div className="teleprompter-line line-prev">
-                                    {activeIndex > 0 ? sentences[activeIndex - 1]?.text : '\u00A0'}
+                                    {activeIndex > 0 && sentences[activeIndex - 1] ? sentences[activeIndex - 1].text : '\u00A0'}
                                 </div>
                                 <div className="teleprompter-line line-curr">
                                     {activeIndex >= 0 && sentences[activeIndex] ? sentences[activeIndex].text : '準備播放...'}
                                 </div>
                                 <div className="teleprompter-line line-next">
-                                    {activeIndex >= 0 && activeIndex < sentences.length - 1 ? sentences[activeIndex + 1]?.text : '\u00A0'}
+                                    {activeIndex >= 0 && activeIndex < sentences.length - 1 && sentences[activeIndex + 1] ? sentences[activeIndex + 1].text : '\u00A0'}
                                 </div>
                             </div>
                         </div>
 
                         {/* 字幕列表面板 */}
                         <div className="subsync-subtitle-panel" ref={subtitlePanelRef}>
-                            <div className="subsync-subtitle-header">
-                                <span className="subsync-subtitle-badge">📝 AI 字幕</span>
-                                <span className="subsync-subtitle-count">
-                                    共 {sentences.length} 句
-                                </span>
-                            </div>
-                            <div className="subsync-subtitle-list">
-                                {sentences.map((s, i) => (
-                                    <div
-                                        key={i}
-                                        ref={i === activeIndex ? activeLineRef : null}
-                                        className={`subsync-subtitle-line ${i === activeIndex ? 'active' : ''}`}
-                                        onClick={() => handleSubtitleClick(s.start)}
-                                    >
-                                        <span className="subsync-subtitle-time">
-                                            {formatTime(s.start)}
-                                        </span>
-                                        <span className="subsync-subtitle-text">
-                                            {s.text}
-                                        </span>
+                            <div className="subsync-subtitle-header" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '8px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                        <span className="subsync-subtitle-badge">📝 AI 字幕 (可雙擊微調)</span>
+                                        {taskId && (
+                                            <div style={{ display: 'flex', gap: '4px' }}>
+                                                <button className="btn btn-outline btn-sm" style={{ padding: '2px 8px', fontSize: '0.75rem' }} onClick={() => handleExport('srt')} title="匯出 SRT 格式">
+                                                    ⬇️ .srt
+                                                </button>
+                                                <button className="btn btn-outline btn-sm" style={{ padding: '2px 8px', fontSize: '0.75rem' }} onClick={() => handleExport('txt')} title="匯出 TXT 格式">
+                                                    ⬇️ .txt
+                                                </button>
+                                            </div>
+                                        )}
                                     </div>
-                                ))}
+                                    <span className="subsync-subtitle-count">
+                                        共 {sentences.length} 句
+                                    </span>
+                                </div>
+
+                                {/* ── LLM 工具列 ── */}
+                                <div className="subsync-llm-toolbar">
+                                    <div className="subsync-llm-group">
+                                        <label className="form-label" style={{ marginBottom: 2 }}>供應商</label>
+                                        <select className="form-select" style={{ padding: '4px 8px', fontSize: '0.8rem' }}
+                                            value={llmProvider} onChange={e => {
+                                                setLlmProvider(e.target.value)
+                                                setLlmModel(llmProviders[e.target.value]?.[0] || '')
+                                            }}>
+                                            {Object.keys(llmProviders).map(p => <option key={p} value={p}>{p}</option>)}
+                                        </select>
+                                    </div>
+                                    <div className="subsync-llm-group">
+                                        <label className="form-label" style={{ marginBottom: 2 }}>模型</label>
+                                        <select className="form-select" style={{ padding: '4px 8px', fontSize: '0.8rem' }}
+                                            value={llmModel} onChange={e => setLlmModel(e.target.value)}>
+                                            {(llmProviders[llmProvider] || []).map(m => <option key={m} value={m}>{m}</option>)}
+                                        </select>
+                                    </div>
+                                    <div className="subsync-llm-group">
+                                        <label className="form-label" style={{ marginBottom: 2 }}>動作</label>
+                                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                            <select className="form-select" style={{ padding: '4px 8px', fontSize: '0.8rem', width: 'auto' }}
+                                                value={llmAction} onChange={e => setLlmAction(e.target.value)}>
+                                                <option value="polish">✨ 語意潤飾</option>
+                                                <option value="translate">🌐 翻譯繁中</option>
+                                            </select>
+                                            <button
+                                                className={`btn btn-sm ${showCustomPrompt ? 'btn-accent' : 'btn-outline'}`}
+                                                style={{ padding: '4px 8px', fontSize: '0.75rem' }}
+                                                onClick={() => setShowCustomPrompt(!showCustomPrompt)}
+                                                title="自訂提示詞"
+                                            >
+                                                ✍️ 自訂
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div className="subsync-llm-actions">
+                                        <button className="btn btn-accent btn-sm"
+                                            disabled={llmProgress >= 0 || !llmModel}
+                                            onClick={handleLlmProcess}>
+                                            執行
+                                        </button>
+                                        {llmProgress >= 0 && (
+                                            <button className="btn btn-danger btn-sm"
+                                                onClick={handleLlmCancel}>
+                                                ⏹ 中斷
+                                            </button>
+                                        )}
+                                        {sentences.some(s => s.original_text !== undefined) && (
+                                            <button className="btn btn-outline btn-sm"
+                                                onClick={handleRevertAll}
+                                                title="復原所有修改到原始字幕">
+                                                ↩ 全部復原
+                                            </button>
+                                        )}
+                                        <button className="btn btn-primary btn-sm"
+                                            onClick={handleSaveSentences}
+                                            disabled={llmProgress >= 0}>
+                                            💾 儲存
+                                        </button>
+                                    </div>
+
+                                    {/* 自訂提示詞輸入區 */}
+                                    {showCustomPrompt && (
+                                        <div style={{ width: '100%', marginTop: '4px' }}>
+                                            <textarea
+                                                className="form-input"
+                                                placeholder={llmAction === 'polish' ?
+                                                    "請輸入自訂潤飾提示詞，例如：請幫我將這段字幕改成幽默的語氣，保留原意。" :
+                                                    "請輸入自訂翻譯提示詞，例如：將以下字幕翻譯成繁體中文，請使用台灣本土流行語。"
+                                                }
+                                                style={{ width: '100%', minHeight: '60px', fontSize: '0.85rem', resize: 'vertical' }}
+                                                value={llmCustomPrompt}
+                                                onChange={e => setLlmCustomPrompt(e.target.value)}
+                                            />
+                                        </div>
+                                    )}
+
+                                    {llmProgress >= 0 && (
+                                        <div className="subsync-llm-progress-bar">
+                                            <div className="subsync-llm-progress-fill" style={{ width: `${llmProgress}%` }}></div>
+                                        </div>
+                                    )}
+                                    {llmError && <div style={{ color: 'var(--color-danger)', fontSize: '0.8rem', width: '100%' }}>{llmError}</div>}
+                                </div>
+                            </div>
+
+                            <div className="subsync-subtitle-list">
+                                {sentences.map((s, i) => {
+                                    const isModified = s.original_text !== undefined && s.original_text !== s.text
+
+                                    return (
+                                        <div
+                                            key={i}
+                                            ref={i === activeIndex ? activeLineRef : null}
+                                            className={`subsync-subtitle-line ${i === activeIndex ? 'active' : ''}`}
+                                            onClick={() => handleSubtitleClick(s.start)}
+                                            onDoubleClick={() => startEdit(i, s.text)}
+                                        >
+                                            <span className="subsync-subtitle-time">
+                                                {formatTime(s.start)}
+                                            </span>
+
+                                            {editingIndex === i ? (
+                                                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                                    <textarea
+                                                        className="subsync-subtitle-text-editor"
+                                                        value={editValue}
+                                                        onChange={e => setEditValue(e.target.value)}
+                                                        onBlur={() => saveEdit(i)}
+                                                        autoFocus
+                                                        onClick={e => e.stopPropagation()}
+                                                    />
+                                                </div>
+                                            ) : (
+                                                <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+                                                    {isModified && (
+                                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                                            <span className="subsync-subtitle-text-original">
+                                                                {s.original_text}
+                                                            </span>
+                                                            <button
+                                                                className="btn btn-sm btn-outline"
+                                                                style={{ padding: '2px 6px', fontSize: '0.7rem', color: 'var(--color-primary)', borderColor: 'var(--color-primary)' }}
+                                                                onClick={(e) => handleRevertEdit(e, i)}
+                                                                title="復原為原始字幕"
+                                                            >
+                                                                ↩ 復原
+                                                            </button>
+                                                        </div>
+                                                    )}
+                                                    <span className="subsync-subtitle-text" style={{ marginTop: isModified ? '2px' : '0' }}>
+                                                        {s.text}
+                                                    </span>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )
+                                })}
                             </div>
                         </div>
                     </div>
