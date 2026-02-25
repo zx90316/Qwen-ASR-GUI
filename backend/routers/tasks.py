@@ -1,0 +1,337 @@
+# -*- coding: utf-8 -*-
+"""
+任務 API 路由
+"""
+import asyncio
+import io
+import shutil
+import threading
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Optional
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
+
+from backend.database import Task, get_db, init_db
+from backend.schemas import TaskResponse, TaskDetailResponse, ConfigResponse
+
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config import MODELS, LANGUAGES, DEFAULT_MODEL, DEFAULT_LANGUAGE
+from asr_engine import ASREngine, detect_device
+
+router = APIRouter(prefix="/api", tags=["tasks"])
+
+# ── 上傳目錄 ──
+UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent / "uploads"
+UPLOAD_DIR.mkdir(exist_ok=True)
+
+# ── 進度追蹤（記憶體內） ──
+_progress_store: dict[int, dict] = {}
+
+
+# ============================================
+# 配置端點
+# ============================================
+
+@router.get("/config", response_model=ConfigResponse)
+def get_config():
+    """取得可用的模型、語言、裝置選項"""
+    device_info = detect_device()
+    # 將 torch.dtype 轉為字串，避免 Pydantic 序列化失敗
+    safe_device = {
+        "device": str(device_info.get("device", "cpu")),
+        "dtype": str(device_info.get("dtype", "")),
+        "label": str(device_info.get("label", "")),
+    }
+    return ConfigResponse(
+        models=MODELS,
+        languages=LANGUAGES,
+        device=safe_device,
+    )
+
+
+# ============================================
+# 任務 CRUD
+# ============================================
+
+@router.post("/tasks", response_model=TaskResponse, status_code=201)
+async def create_task(
+    file: UploadFile = File(...),
+    model: str = Form(DEFAULT_MODEL),
+    language: str = Form(DEFAULT_LANGUAGE),
+    enable_diarization: bool = Form(True),
+    to_traditional: bool = Form(True),
+    db: Session = Depends(get_db),
+):
+    """上傳音訊並建立 ASR 任務"""
+    # 驗證模型和語言
+    if model not in MODELS:
+        raise HTTPException(status_code=400, detail=f"不支援的模型: {model}")
+    if language not in LANGUAGES:
+        raise HTTPException(status_code=400, detail=f"不支援的語言: {language}")
+
+    # 儲存上傳檔案
+    safe_name = file.filename.replace("/", "_").replace("\\", "_")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    save_name = f"{timestamp}_{safe_name}"
+    save_path = UPLOAD_DIR / save_name
+    with open(save_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    # 建立任務紀錄
+    task = Task(
+        filename=file.filename,
+        status="pending",
+        model=model,
+        language=language,
+        enable_diarization=enable_diarization,
+        to_traditional=to_traditional,
+        progress=0.0,
+        progress_message="等待中",
+    )
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+
+    # 啟動背景 ASR 處理
+    task_id = task.id
+    audio_path = str(save_path)
+    threading.Thread(
+        target=_run_asr_task,
+        args=(task_id, audio_path, model, language, enable_diarization, to_traditional),
+        daemon=True,
+    ).start()
+
+    return task
+
+
+@router.get("/tasks", response_model=list[TaskResponse])
+def list_tasks(
+    status: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+):
+    """查詢任務清單"""
+    query = db.query(Task)
+    if status:
+        query = query.filter(Task.status == status)
+    tasks = query.order_by(Task.created_at.desc()).offset(skip).limit(limit).all()
+    return tasks
+
+
+@router.get("/tasks/{task_id}", response_model=TaskDetailResponse)
+def get_task(task_id: int, db: Session = Depends(get_db)):
+    """查詢單一任務詳情（含結果）"""
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="任務不存在")
+
+    # 手動構建 dict，先反序列化 JSON 字串欄位
+    return TaskDetailResponse(
+        id=task.id,
+        filename=task.filename,
+        status=task.status,
+        model=task.model,
+        language=task.language,
+        enable_diarization=task.enable_diarization,
+        to_traditional=task.to_traditional,
+        progress=task.progress,
+        progress_message=task.progress_message,
+        error_message=task.error_message,
+        created_at=task.created_at,
+        completed_at=task.completed_at,
+        merged_result=task.get_merged_result(),
+        raw_text=task.raw_text,
+        sentences=task.get_sentences(),
+    )
+
+
+@router.delete("/tasks/{task_id}")
+def delete_task(task_id: int, db: Session = Depends(get_db)):
+    """刪除任務"""
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="任務不存在")
+    db.delete(task)
+    db.commit()
+    return {"message": "已刪除"}
+
+
+# ============================================
+# SSE 進度推送
+# ============================================
+
+@router.get("/tasks/{task_id}/progress")
+async def task_progress(task_id: int, db: Session = Depends(get_db)):
+    """SSE 即時進度推送"""
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="任務不存在")
+
+    async def event_generator():
+        import json
+        last_progress = -1
+        while True:
+            progress_data = _progress_store.get(task_id)
+            if progress_data:
+                current = progress_data.get("percent", 0)
+                if current != last_progress:
+                    last_progress = current
+                    data = json.dumps(progress_data, ensure_ascii=False)
+                    yield f"data: {data}\n\n"
+
+                if progress_data.get("done"):
+                    break
+            await asyncio.sleep(0.5)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ============================================
+# 匯出
+# ============================================
+
+@router.get("/tasks/{task_id}/export/{format_type}")
+def export_task(task_id: int, format_type: str, variant: str = "merged", db: Session = Depends(get_db)):
+    """
+    匯出結果
+    format_type: txt / srt
+    variant: merged / raw / subtitle
+    """
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="任務不存在")
+    if task.status != "completed":
+        raise HTTPException(status_code=400, detail="任務尚未完成")
+
+    segments = task.get_merged_result()
+    sentences = task.get_sentences()
+    raw_text = task.raw_text or ""
+    base_name = Path(task.filename).stem
+
+    buf = io.StringIO()
+
+    if format_type == "txt":
+        if variant == "merged":
+            for seg in segments:
+                spk = seg.get("speaker", "")
+                start = ASREngine.format_time(seg["start"])
+                end = ASREngine.format_time(seg["end"])
+                prefix = f"[{spk}] " if spk else ""
+                buf.write(f"{prefix}({start} → {end})\n{seg['text']}\n\n")
+            filename = f"{base_name}_merged.txt"
+        elif variant == "raw":
+            buf.write(raw_text)
+            filename = f"{base_name}_raw.txt"
+        elif variant == "subtitle":
+            for sent in sentences:
+                start = ASREngine.format_time(sent["start"])
+                end = ASREngine.format_time(sent["end"])
+                buf.write(f"{start} → {end}\n{sent['text']}\n\n")
+            filename = f"{base_name}_subtitle.txt"
+        else:
+            raise HTTPException(status_code=400, detail=f"不支援的 variant: {variant}")
+        media_type = "text/plain"
+
+    elif format_type == "srt":
+        target = segments if variant == "merged" else sentences
+        for idx, seg in enumerate(target, 1):
+            start_srt = ASREngine.format_srt_time(seg["start"])
+            end_srt = ASREngine.format_srt_time(seg["end"])
+            text = seg["text"]
+            if variant == "merged":
+                spk = seg.get("speaker", "")
+                if spk:
+                    text = f"[{spk}] {text}"
+            buf.write(f"{idx}\n{start_srt} --> {end_srt}\n{text}\n\n")
+        filename = f"{base_name}_{variant}.srt"
+        media_type = "text/srt"
+    else:
+        raise HTTPException(status_code=400, detail=f"不支援的格式: {format_type}")
+
+    buf.seek(0)
+    content = buf.getvalue().encode("utf-8-sig")
+
+    return StreamingResponse(
+        io.BytesIO(content),
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ============================================
+# 背景 ASR 處理
+# ============================================
+
+def _run_asr_task(task_id: int, audio_path: str, model: str, language: str,
+                  enable_diarization: bool, to_traditional: bool):
+    """在背景執行 ASR 任務"""
+    from backend.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if not task:
+            return
+
+        task.status = "processing"
+        task.progress_message = "開始處理..."
+        db.commit()
+
+        def on_progress(percent: float, message: str):
+            _progress_store[task_id] = {
+                "percent": percent,
+                "message": message,
+                "done": False,
+            }
+            task.progress = percent
+            task.progress_message = message
+            db.commit()
+
+        model_name = MODELS[model]
+        lang_code = LANGUAGES[language]
+
+        engine = ASREngine(
+            model_name=model_name,
+            device="auto",
+            on_progress=on_progress,
+        )
+
+        result = engine.run(
+            audio_path,
+            language=lang_code,
+            enable_diarization=enable_diarization,
+            to_traditional=to_traditional,
+        )
+
+        task.status = "completed"
+        task.set_merged_result(result["merged"])
+        task.raw_text = result["raw_text"]
+        task.set_sentences(result["sentences"])
+        task.progress = 100.0
+        task.progress_message = "完成"
+        task.completed_at = datetime.now(timezone.utc)
+        db.commit()
+
+        _progress_store[task_id] = {"percent": 100, "message": "完成", "done": True}
+
+    except Exception as e:
+        task.status = "failed"
+        task.error_message = str(e)
+        task.progress_message = "處理失敗"
+        db.commit()
+        _progress_store[task_id] = {"percent": 0, "message": f"失敗: {e}", "done": True}
+    finally:
+        db.close()
