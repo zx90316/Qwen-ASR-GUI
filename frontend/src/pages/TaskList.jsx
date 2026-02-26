@@ -108,7 +108,10 @@ export default function TaskList() {
                                 onClick={() => navigate(`/tasks/${task.id}`)}
                             >
                                 <div className="task-card-info">
-                                    <div className="task-card-filename">🎵 {task.filename}</div>
+                                    <div className="task-card-filename">
+                                        {task.task_type === 'youtube' ? '📺 ' : (task.task_type === 'subsync_upload' ? '📁 ' : '🎵 ')}
+                                        {task.filename || task.video_title}
+                                    </div>
                                     <div className="task-card-meta">
                                         <span>{task.model}</span>
                                         <span>·</span>
@@ -135,6 +138,19 @@ export default function TaskList() {
                                         {task.status === 'processing' && <span className="spinner" style={{ width: 10, height: 10 }} />}
                                         {status.label}
                                     </span>
+                                    {task.status === 'completed' && (
+                                        <button
+                                            className="btn btn-outline btn-sm"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                navigate(`/subsync?taskId=${task.id}`);
+                                            }}
+                                            title="在 SubSync 開啟"
+                                            style={{ marginRight: 8, borderColor: 'var(--color-primary)', color: 'var(--color-primary)' }}
+                                        >
+                                            🎬 SubSync
+                                        </button>
+                                    )}
                                     <button
                                         className="btn btn-outline btn-sm"
                                         onClick={(e) => handleDelete(e, task.id)}

@@ -126,7 +126,7 @@ export default function SubSync() {
     // ── 載入配置與歷史紀錄 ──
     const fetchHistory = useCallback(async () => {
         try {
-            const r = await fetchWithAuth('/api/youtube')
+            const r = await fetchWithAuth('/api/tasks')
             if (r.ok) setHistory(await r.json())
         } catch { }
     }, [])
@@ -245,7 +245,7 @@ export default function SubSync() {
     // ── SSE 進度監聽 ──
     const listenProgress = (tid) => {
         const token = localStorage.getItem('token') || '';
-        const evtSource = new EventSource(`/api/youtube/${tid}/progress?token=${token}`)
+        const evtSource = new EventSource(`/api/tasks/${tid}/progress?token=${token}`)
         evtSource.onmessage = (event) => {
             const data = JSON.parse(event.data)
             setProgress(data.percent || 0)
@@ -271,7 +271,7 @@ export default function SubSync() {
 
     const fetchResult = async (tid) => {
         try {
-            const resp = await fetchWithAuth(`/api/youtube/${tid}`)
+            const resp = await fetchWithAuth(`/api/tasks/${tid}`)
             if (!resp.ok) {
                 if (resp.status === 404) throw new Error('任務不存在或已被刪除')
                 throw new Error('載入結果失敗')
@@ -285,7 +285,7 @@ export default function SubSync() {
                 setPhase('ready')
                 fetchHistory() // 更新歷史狀態
                 // 初始化 YouTube 播放器
-                initPlayer(data.video_id)
+                initPlayer(data.video_id, data.task_type)
             } else if (data.status === 'failed') {
                 setError(data.error_message || '處理失敗')
                 setPhase('input')
@@ -306,8 +306,8 @@ export default function SubSync() {
     }
 
     // ── 初始化 YouTube Player ──
-    const initPlayer = async (vid) => {
-        if (vid.startsWith('local_')) {
+    const initPlayer = async (vid, taskType) => {
+        if (vid && vid.startsWith('local_')) {
             // Local video/audio rendering
             if (playerContainerRef.current) {
                 playerContainerRef.current.innerHTML = ''
@@ -316,7 +316,12 @@ export default function SubSync() {
                 videoEl.style.width = '100%'
                 videoEl.style.height = '100%'
                 videoEl.style.backgroundColor = '#000'
-                videoEl.src = `/api/youtube/media/${vid}`
+
+                if (taskType === 'local') {
+                    videoEl.src = `/api/tasks/media/${vid}`
+                } else {
+                    videoEl.src = `/api/youtube/media/${vid}`
+                }
 
                 playerRef.current = {
                     getCurrentTime: () => videoEl.currentTime,
@@ -520,7 +525,7 @@ export default function SubSync() {
             await fetchWithAuth('/api/llm/cancel', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ task_id: taskId })
+                body: JSON.stringify({ task_id: taskId, task_type: 'asr' })
             })
         } catch (e) { console.error('中斷失敗', e) }
     }
@@ -529,7 +534,7 @@ export default function SubSync() {
     const handleExport = (format) => {
         if (!taskId) return
         const token = localStorage.getItem('token') || '';
-        window.open(`/api/youtube/${taskId}/export/${format}?token=${token}`, '_blank')
+        window.open(`/api/tasks/${taskId}/export/${format}?variant=subtitle&token=${token}`, '_blank')
     }
 
     // ── 保存最終字幕 ──
@@ -541,6 +546,7 @@ export default function SubSync() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     task_id: taskId,
+                    task_type: 'asr',
                     sentences: sentences
                 })
             })
@@ -598,7 +604,7 @@ export default function SubSync() {
         e.stopPropagation()
         if (!confirm('確定要刪除此紀錄？')) return
         try {
-            await fetchWithAuth(`/api/youtube/${id}`, { method: 'DELETE' })
+            await fetchWithAuth(`/api/tasks/${id}`, { method: 'DELETE' })
             fetchHistory()
             if (taskId === id) handleReset()
         } catch { }
@@ -748,7 +754,8 @@ export default function SubSync() {
                                     >
                                         <div className="history-info">
                                             <div style={{ fontWeight: 500 }} className="text-truncate">
-                                                {t.video_title || t.video_id}
+                                                {t.task_type === 'youtube' ? '📺 ' : (t.task_type === 'subsync_upload' ? '📁 ' : '🎵 ')}
+                                                {t.filename || t.video_title}
                                             </div>
                                             <div className="text-muted" style={{ fontSize: '0.85rem', marginTop: 4 }}>
                                                 {new Date(t.created_at).toLocaleString()} ·
