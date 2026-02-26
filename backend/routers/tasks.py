@@ -75,10 +75,13 @@ async def create_task(
     if language not in LANGUAGES:
         raise HTTPException(status_code=400, detail=f"不支援的語言: {language}")
 
-    # 儲存上傳檔案
+    import uuid
+    # Generate a local video id
+    video_id = f"local_{uuid.uuid4().hex[:11]}"
     safe_name = file.filename.replace("/", "_").replace("\\", "_")
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    save_name = f"{timestamp}_{safe_name}"
+    import os
+    ext = os.path.splitext(safe_name)[1]
+    save_name = f"{video_id}{ext}"
     save_path = UPLOAD_DIR / save_name
     with open(save_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
@@ -86,6 +89,8 @@ async def create_task(
     # 建立任務紀錄
     task = Task(
         owner_id=current_user["owner_id"],
+        task_type="local",
+        video_id=video_id,
         filename=file.filename,
         status="pending",
         model=model,
@@ -127,6 +132,22 @@ def list_tasks(
     return tasks
 
 
+@router.get("/tasks/media/{video_id}")
+def get_task_media(video_id: str):
+    """取得上傳的本地影音檔案"""
+    if not video_id.startswith("local_"):
+        raise HTTPException(status_code=400, detail="僅支援本地上傳檔案")
+    
+    from fastapi.responses import FileResponse
+    # Find the file with any extension matching the video_id
+    for file_path in UPLOAD_DIR.glob(f"{video_id}.*"):
+        if file_path.is_file():
+            # stream the file with FileResponse allowing bytes range request
+            return FileResponse(file_path)
+            
+    raise HTTPException(status_code=404, detail="找不到媒體檔案")
+
+
 @router.get("/tasks/{task_id}", response_model=TaskDetailResponse)
 def get_task(task_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     """查詢單一任務詳情（含結果）"""
@@ -137,6 +158,8 @@ def get_task(task_id: int, db: Session = Depends(get_db), current_user: dict = D
     # 手動構建 dict，先反序列化 JSON 字串欄位
     return TaskDetailResponse(
         id=task.id,
+        task_type=task.task_type,
+        video_id=task.video_id,
         filename=task.filename,
         status=task.status,
         model=task.model,
@@ -160,6 +183,14 @@ def delete_task(task_id: int, db: Session = Depends(get_db), current_user: dict 
     task = db.query(Task).filter(Task.id == task_id, Task.owner_id == current_user["owner_id"]).first()
     if not task:
         raise HTTPException(status_code=404, detail="任務不存在")
+    # If it's a local file, delete it from storage
+    if task.video_id and task.video_id.startswith("local_"):
+        for file_path in UPLOAD_DIR.glob(f"{task.video_id}.*"):
+            try:
+                file_path.unlink()
+            except Exception as e:
+                print(f"Error deleting local media {file_path}: {e}")
+
     db.delete(task)
     db.commit()
     return {"message": "已刪除"}

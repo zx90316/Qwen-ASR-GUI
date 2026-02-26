@@ -7,7 +7,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from backend.database import get_db, YouTubeTask, Task
+from backend.database import get_db, Task
 from backend.llm_manager import llm_manager
 from backend.auth_utils import get_current_user
 
@@ -45,10 +45,7 @@ cancelled_tasks = set()
 @router.post("/process")
 async def process_subtitles(req: ProcessRequest, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     """逐句處理字幕 (潤飾或翻譯)，並透過 SSE 回傳進度"""
-    if req.task_type == "asr":
-        db_task = db.query(Task).filter(Task.id == req.task_id, Task.owner_id == current_user["owner_id"]).first()
-    else:
-        db_task = db.query(YouTubeTask).filter(YouTubeTask.id == req.task_id, YouTubeTask.owner_id == current_user["owner_id"]).first()
+    db_task = db.query(Task).filter(Task.id == req.task_id, Task.owner_id == current_user["owner_id"]).first()
         
     if not db_task:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -143,10 +140,7 @@ async def cancel_processing(req: CancelRequest, current_user: dict = Depends(get
 @router.post("/save")
 async def save_processed_subtitles(req: SaveRequest, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     """前端微調後，儲存最終版的字幕"""
-    if req.task_type == "asr":
-        db_task = db.query(Task).filter(Task.id == req.task_id, Task.owner_id == current_user["owner_id"]).first()
-    else:
-        db_task = db.query(YouTubeTask).filter(YouTubeTask.id == req.task_id, YouTubeTask.owner_id == current_user["owner_id"]).first()
+    db_task = db.query(Task).filter(Task.id == req.task_id, Task.owner_id == current_user["owner_id"]).first()
         
     if not db_task:
         raise HTTPException(status_code=404, detail="Task not found")

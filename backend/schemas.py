@@ -22,6 +22,8 @@ class TaskCreate(BaseModel):
 
 class TaskResponse(BaseModel):
     id: int
+    task_type: str
+    video_id: Optional[str] = None
     filename: str
     status: str
     model: str
@@ -62,24 +64,3 @@ class YouTubeAnalyzeRequest(BaseModel):
     language: str = "中文"
 
 
-class YouTubeTaskResponse(BaseModel):
-    id: int
-    video_id: str
-    video_title: Optional[str] = None
-    status: str
-    model: str
-    language: str
-    progress: float
-    progress_message: Optional[str] = None
-    error_message: Optional[str] = None
-    created_at: datetime
-    completed_at: Optional[datetime] = None
-
-    model_config = {"from_attributes": True}
-
-
-class YouTubeTaskDetailResponse(YouTubeTaskResponse):
-    """含完整字幕結果"""
-    sentences: Optional[List[Any]] = None
-
-    model_config = {"from_attributes": True}
