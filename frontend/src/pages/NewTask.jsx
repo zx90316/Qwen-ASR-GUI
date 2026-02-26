@@ -1,3 +1,4 @@
+import { fetchWithAuth } from '../utils/api';
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 
@@ -14,7 +15,7 @@ export default function NewTask() {
     const navigate = useNavigate()
 
     useEffect(() => {
-        fetch('/api/config')
+        fetchWithAuth('/api/config')
             .then(res => res.json())
             .then(data => {
                 setConfig(data)
@@ -45,11 +46,11 @@ export default function NewTask() {
             formData.append('enable_diarization', diarization)
             formData.append('to_traditional', traditional)
 
-            const res = await fetch('/api/tasks', {
+            const token = localStorage.getItem('token') || '';
+            const res = await fetchWithAuth(`/api/tasks?token=${token}`, {
                 method: 'POST',
                 body: formData,
             })
-
             if (!res.ok) {
                 const err = await res.json()
                 throw new Error(err.detail || '建立任務失敗')

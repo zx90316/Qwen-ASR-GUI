@@ -1,0 +1,70 @@
+import os
+import smtplib
+from email.message import EmailMessage
+from datetime import datetime, timedelta, timezone
+from typing import Optional, Dict
+
+import jwt
+from fastapi import Request, HTTPException, Security, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from dotenv import load_dotenv
+
+load_dotenv()
+
+SECRET_KEY = os.getenv("SECRET_KEY", "qwen_asr_secret_key_change_me_in_prod")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_DAYS = 30 # Token expires in 30 days
+SMTP_USER = os.getenv("SMTP_USER")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
+
+security = HTTPBearer(auto_error=False)
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.now(timezone.utc) + expires_delta
+    else:
+        expire = datetime.now(timezone.utc) + timedelta(days=ACCESS_TOKEN_EXPIRE_DAYS)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+def verify_token(token: str) -> dict:
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return payload
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+def get_current_user(request: Request, credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
+    token = None
+    if credentials:
+        token = credentials.credentials
+    elif "token" in request.query_params:
+        token = request.query_params["token"]
+    
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+        
+    # Should return a dict containing {"owner_id": <id>, "role": "user" | "guest"}
+    return verify_token(token)
+
+def send_verification_email(to_email: str, code: str):
+    if not SMTP_USER or not SMTP_PASSWORD:
+        raise ValueError("SMTP_USER or SMTP_PASSWORD not configured in .env")
+
+    msg = EmailMessage()
+    msg.set_content(f"您的 Qwen ASR 登入驗證碼為：{code}\n\n驗證碼 5 分鐘內有效。請勿將此驗證碼告訴他人。")
+    msg["Subject"] = "Qwen ASR 登入驗證碼"
+    msg["From"] = SMTP_USER
+    msg["To"] = to_email
+
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.send_message(msg)
+    except Exception as e:
+        print(f"Failed to send email: {e}")
+        raise e

@@ -20,6 +20,7 @@ from backend.schemas import (
     YouTubeTaskResponse,
     YouTubeTaskDetailResponse,
 )
+from backend.auth_utils import get_current_user
 
 import sys, os
 import uuid
@@ -112,9 +113,9 @@ def download_audio(video_id: str, output_dir: Path, on_progress=None) -> dict:
 # ============================================
 
 @router.get("", response_model=list[YouTubeTaskResponse])
-def get_youtube_tasks(status: Optional[str] = None, db: Session = Depends(get_db)):
+def get_youtube_tasks(status: Optional[str] = None, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     """列出所有 YouTube 任務"""
-    query = db.query(YouTubeTask)
+    query = db.query(YouTubeTask).filter(YouTubeTask.owner_id == current_user["owner_id"])
     if status:
         query = query.filter(YouTubeTask.status == status)
     # 依建立時間反序（最新的在最前）
@@ -122,7 +123,7 @@ def get_youtube_tasks(status: Optional[str] = None, db: Session = Depends(get_db
     return tasks
 
 @router.post("/analyze", response_model=YouTubeTaskResponse, status_code=201)
-def analyze_youtube(req: YouTubeAnalyzeRequest, db: Session = Depends(get_db)):
+def analyze_youtube(req: YouTubeAnalyzeRequest, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     """提交 YouTube 影片進行 ASR 字幕分析"""
 
     # 驗證 URL
@@ -138,6 +139,7 @@ def analyze_youtube(req: YouTubeAnalyzeRequest, db: Session = Depends(get_db)):
 
     # 建立任務
     task = YouTubeTask(
+        owner_id=current_user["owner_id"],
         video_id=video_id,
         video_title=None,
         status="pending",
@@ -166,7 +168,8 @@ async def analyze_youtube_upload(
     file: UploadFile = File(...),
     model: str = Form(DEFAULT_MODEL),
     language: str = Form(DEFAULT_LANGUAGE),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
 ):
     """上傳本地影音檔案進行 ASR 字幕分析"""
     
@@ -190,6 +193,7 @@ async def analyze_youtube_upload(
 
     # 建立任務
     task = YouTubeTask(
+        owner_id=current_user["owner_id"],
         video_id=video_id,
         video_title=file.filename,
         status="pending",
@@ -229,9 +233,9 @@ def get_youtube_media(video_id: str):
 
 
 @router.get("/{task_id}", response_model=YouTubeTaskDetailResponse)
-def get_youtube_task(task_id: int, db: Session = Depends(get_db)):
+def get_youtube_task(task_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     """查詢 YouTube 字幕任務詳情"""
-    task = db.query(YouTubeTask).filter(YouTubeTask.id == task_id).first()
+    task = db.query(YouTubeTask).filter(YouTubeTask.id == task_id, YouTubeTask.owner_id == current_user["owner_id"]).first()
     if not task:
         raise HTTPException(status_code=404, detail="任務不存在")
 
@@ -252,9 +256,9 @@ def get_youtube_task(task_id: int, db: Session = Depends(get_db)):
 
 
 @router.delete("/{task_id}", status_code=204)
-def delete_youtube_task(task_id: int, db: Session = Depends(get_db)):
+def delete_youtube_task(task_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     """刪除 YouTube 任務"""
-    task = db.query(YouTubeTask).filter(YouTubeTask.id == task_id).first()
+    task = db.query(YouTubeTask).filter(YouTubeTask.id == task_id, YouTubeTask.owner_id == current_user["owner_id"]).first()
     if not task:
         raise HTTPException(status_code=404, detail="任務不存在")
 
@@ -271,9 +275,9 @@ def delete_youtube_task(task_id: int, db: Session = Depends(get_db)):
     return None
 
 @router.get("/{task_id}/progress")
-async def youtube_task_progress(task_id: int, db: Session = Depends(get_db)):
+async def youtube_task_progress(task_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     """SSE 即時進度推送"""
-    task = db.query(YouTubeTask).filter(YouTubeTask.id == task_id).first()
+    task = db.query(YouTubeTask).filter(YouTubeTask.id == task_id, YouTubeTask.owner_id == current_user["owner_id"]).first()
     if not task:
         raise HTTPException(status_code=404, detail="任務不存在")
 
@@ -304,14 +308,14 @@ async def youtube_task_progress(task_id: int, db: Session = Depends(get_db)):
     )
 
 @router.get("/{task_id}/export/{format_type}")
-def export_youtube_task(task_id: int, format_type: str, db: Session = Depends(get_db)):
+def export_youtube_task(task_id: int, format_type: str, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     """
     匯出 YouTube 任務結果
     format_type: txt / srt
     """
     import io
     import urllib.parse
-    task = db.query(YouTubeTask).filter(YouTubeTask.id == task_id).first()
+    task = db.query(YouTubeTask).filter(YouTubeTask.id == task_id, YouTubeTask.owner_id == current_user["owner_id"]).first()
     if not task:
         raise HTTPException(status_code=404, detail="任務不存在")
     if task.status != "completed":

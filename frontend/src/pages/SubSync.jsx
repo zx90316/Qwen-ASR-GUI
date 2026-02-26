@@ -1,3 +1,4 @@
+import { fetchWithAuth } from '../utils/api';
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 
@@ -122,14 +123,14 @@ export default function SubSync() {
     // ── 載入配置與歷史紀錄 ──
     const fetchHistory = useCallback(async () => {
         try {
-            const r = await fetch('/api/youtube')
+            const r = await fetchWithAuth('/api/youtube')
             if (r.ok) setHistory(await r.json())
         } catch { }
     }, [])
 
     const fetchLlmProviders = useCallback(async () => {
         try {
-            const r = await fetch('/api/llm/providers')
+            const r = await fetchWithAuth('/api/llm/providers')
             if (r.ok) {
                 const data = await r.json()
                 setLlmProviders(data)
@@ -143,7 +144,7 @@ export default function SubSync() {
     }, [])
 
     useEffect(() => {
-        fetch('/api/config')
+        fetchWithAuth('/api/config')
             .then(r => r.json())
             .then(setConfig)
             .catch(() => { })
@@ -202,7 +203,7 @@ export default function SubSync() {
         try {
             let resp
             if (inputType === 'youtube') {
-                resp = await fetch('/api/youtube/analyze', {
+                resp = await fetchWithAuth('/api/youtube/analyze', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ url, model, language }),
@@ -213,7 +214,8 @@ export default function SubSync() {
                 formData.append('model', model)
                 formData.append('language', language)
 
-                resp = await fetch('/api/youtube/analyze/upload', {
+                const token = localStorage.getItem('token') || '';
+                resp = await fetchWithAuth(`/api/youtube/analyze/upload?token=${token}`, {
                     method: 'POST',
                     body: formData,
                 })
@@ -239,7 +241,8 @@ export default function SubSync() {
 
     // ── SSE 進度監聽 ──
     const listenProgress = (tid) => {
-        const evtSource = new EventSource(`/api/youtube/${tid}/progress`)
+        const token = localStorage.getItem('token') || '';
+        const evtSource = new EventSource(`/api/youtube/${tid}/progress?token=${token}`)
         evtSource.onmessage = (event) => {
             const data = JSON.parse(event.data)
             setProgress(data.percent || 0)
@@ -263,10 +266,13 @@ export default function SubSync() {
         }
     }
 
-    // ── 載入結果 ──
     const fetchResult = async (tid) => {
         try {
-            const resp = await fetch(`/api/youtube/${tid}`)
+            const resp = await fetchWithAuth(`/api/youtube/${tid}`)
+            if (!resp.ok) {
+                if (resp.status === 404) throw new Error('任務不存在或已被刪除')
+                throw new Error('載入結果失敗')
+            }
             const data = await resp.json()
             if (data.status === 'completed' && data.sentences) {
                 setSentences(data.sentences)
@@ -284,11 +290,15 @@ export default function SubSync() {
                 // 仍在處理中，等待
                 setTaskId(tid)
                 setPhase('processing')
+                if (data.progress !== undefined) setProgress(data.progress)
+                if (data.progress_message !== undefined) setProgressMessage(data.progress_message)
                 setTimeout(() => fetchResult(tid), 2000)
             }
-        } catch {
-            setError('無法載入結果')
+        } catch (e) {
+            setError(e.message || '無法載入結果')
             setPhase('input')
+            setTaskId(null)
+            fetchHistory()
         }
     }
 
@@ -431,7 +441,7 @@ export default function SubSync() {
         setEditingIndex(-1)
 
         try {
-            const resp = await fetch('/api/llm/process', {
+            const resp = await fetchWithAuth('/api/llm/process', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -504,7 +514,7 @@ export default function SubSync() {
     const handleLlmCancel = async () => {
         if (!taskId) return
         try {
-            await fetch('/api/llm/cancel', {
+            await fetchWithAuth('/api/llm/cancel', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ task_id: taskId })
@@ -515,14 +525,15 @@ export default function SubSync() {
     // ── 匯出處理 ──
     const handleExport = (format) => {
         if (!taskId) return
-        window.open(`/api/youtube/${taskId}/export/${format}`, '_blank')
+        const token = localStorage.getItem('token') || '';
+        window.open(`/api/youtube/${taskId}/export/${format}?token=${token}`, '_blank')
     }
 
     // ── 保存最終字幕 ──
     const handleSaveSentences = async () => {
         if (!taskId) return
         try {
-            const resp = await fetch('/api/llm/save', {
+            const resp = await fetchWithAuth('/api/llm/save', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -584,7 +595,7 @@ export default function SubSync() {
         e.stopPropagation()
         if (!confirm('確定要刪除此紀錄？')) return
         try {
-            await fetch(`/api/youtube/${id}`, { method: 'DELETE' })
+            await fetchWithAuth(`/api/youtube/${id}`, { method: 'DELETE' })
             fetchHistory()
             if (taskId === id) handleReset()
         } catch { }

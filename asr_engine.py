@@ -96,7 +96,7 @@ class ASREngine:
             dtype=self.dtype,
             device_map=self.device,
             max_inference_batch_size=32,
-            max_new_tokens=8096,
+            max_new_tokens=4096,
             forced_aligner=FORCED_ALIGNER,
             forced_aligner_kwargs=dict(
                 dtype=self.dtype,
