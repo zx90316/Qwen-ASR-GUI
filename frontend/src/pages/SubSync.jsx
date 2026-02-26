@@ -81,6 +81,9 @@ export default function SubSync() {
     const [offset, setOffset] = useState(0)
     const [searchParams, setSearchParams] = useSearchParams()
 
+    const [maxSentenceChars, setMaxSentenceChars] = useState(30)
+    const [resegmenting, setResegmenting] = useState(false)
+
     // ── LLM 潤飾/翻譯狀態 ──
     const [llmProviders, setLlmProviders] = useState({})
     const [llmProvider, setLlmProvider] = useState('')
@@ -601,6 +604,32 @@ export default function SubSync() {
         } catch { }
     }
 
+    // ── 重新分句處理 ──
+    const handleResegment = async () => {
+        if (!taskId) return;
+        setResegmenting(true);
+        try {
+            const resp = await fetchWithAuth(`/api/youtube/${taskId}/resegment`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    max_sentence_chars: parseInt(maxSentenceChars, 10),
+                    force_cut_chars: parseInt(maxSentenceChars, 10) + 20
+                })
+            });
+            if (!resp.ok) {
+                const err = await resp.json();
+                throw new Error(err.detail || '重新分句失敗');
+            }
+            const data = await resp.json();
+            setSentences(data.sentences);
+        } catch (e) {
+            alert(e.message);
+        } finally {
+            setResegmenting(false);
+        }
+    };
+
     // ============================
     // 渲染
     // ============================
@@ -803,6 +832,27 @@ export default function SubSync() {
                                     onChange={e => setOffset(parseFloat(e.target.value) || 0)}
                                     title="正數讓字幕延後，負數讓字幕提前"
                                 />
+                            </div>
+                            <div className="subsync-offset-control" style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'var(--color-surface-hover)', padding: '4px 10px', borderRadius: 'var(--radius-sm)' }}>
+                                <label style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>最大分句字數</label>
+                                <input
+                                    type="number"
+                                    min="10"
+                                    max="150"
+                                    className="form-input"
+                                    style={{ width: '60px', padding: '2px 8px', height: '28px', fontSize: '0.9rem' }}
+                                    value={maxSentenceChars}
+                                    onChange={e => setMaxSentenceChars(e.target.value)}
+                                    title="設定自動斷句的長度限制"
+                                />
+                                <button
+                                    className="btn btn-outline btn-sm"
+                                    style={{ padding: '2px 8px', height: '28px', fontSize: '0.8rem' }}
+                                    onClick={handleResegment}
+                                    disabled={resegmenting}
+                                >
+                                    {resegmenting ? '處理中' : '套用'}
+                                </button>
                             </div>
                             <button className="btn btn-outline btn-sm" onClick={handleReset}>
                                 ← 新分析
