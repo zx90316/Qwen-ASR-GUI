@@ -7,13 +7,15 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from backend.database import get_db, YouTubeTask
+from backend.database import get_db, YouTubeTask, Task
 from backend.llm_manager import llm_manager
+from backend.auth_utils import get_current_user
 
 router = APIRouter(prefix="/api/llm", tags=["llm"])
 
 class ProcessRequest(BaseModel):
     task_id: int
+    task_type: str = "youtube"  # "youtube" or "asr"
     provider: str
     model: str
     action: str  # "polish" or "translate"
@@ -25,9 +27,11 @@ class ProcessRequest(BaseModel):
 
 class CancelRequest(BaseModel):
     task_id: int
+    task_type: str = "youtube"
 
 class SaveRequest(BaseModel):
     task_id: int
+    task_type: str = "youtube"
     sentences: list
 
 @router.get("/providers")
@@ -39,9 +43,13 @@ async def get_providers() -> Dict[str, list]:
 cancelled_tasks = set()
 
 @router.post("/process")
-async def process_subtitles(req: ProcessRequest, db: Session = Depends(get_db)):
+async def process_subtitles(req: ProcessRequest, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     """逐句處理字幕 (潤飾或翻譯)，並透過 SSE 回傳進度"""
-    db_task = db.query(YouTubeTask).filter(YouTubeTask.id == req.task_id).first()
+    if req.task_type == "asr":
+        db_task = db.query(Task).filter(Task.id == req.task_id, Task.owner_id == current_user["owner_id"]).first()
+    else:
+        db_task = db.query(YouTubeTask).filter(YouTubeTask.id == req.task_id, YouTubeTask.owner_id == current_user["owner_id"]).first()
+        
     if not db_task:
         raise HTTPException(status_code=404, detail="Task not found")
         
@@ -49,9 +57,11 @@ async def process_subtitles(req: ProcessRequest, db: Session = Depends(get_db)):
     if not sentences:
         raise HTTPException(status_code=400, detail="No sentences to process")
 
+    cancel_key = f"{req.task_type}_{req.task_id}"
+    
     # 移除之前的取消標記 (如果有的話)
-    if req.task_id in cancelled_tasks:
-        cancelled_tasks.remove(req.task_id)
+    if cancel_key in cancelled_tasks:
+        cancelled_tasks.remove(cancel_key)
 
     # SSE Generator
     async def event_generator():
@@ -59,9 +69,9 @@ async def process_subtitles(req: ProcessRequest, db: Session = Depends(get_db)):
         processed = 0
         
         for i, sentence in enumerate(sentences):
-            if req.task_id in cancelled_tasks:
-                print(f"Task {req.task_id} cancelled.")
-                cancelled_tasks.remove(req.task_id)
+            if cancel_key in cancelled_tasks:
+                print(f"Task {req.task_id} ({req.task_type}) cancelled.")
+                cancelled_tasks.remove(cancel_key)
                 # 儲存目前進度
                 db_task.set_sentences(sentences)
                 db.commit()
@@ -123,15 +133,21 @@ async def process_subtitles(req: ProcessRequest, db: Session = Depends(get_db)):
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 @router.post("/cancel")
-async def cancel_processing(req: CancelRequest):
+async def cancel_processing(req: CancelRequest, current_user: dict = Depends(get_current_user)):
     """標記特定任務為取消狀態"""
-    cancelled_tasks.add(req.task_id)
+    cancel_key = f"{req.task_type}_{req.task_id}"
+    cancelled_tasks.add(cancel_key)
     return {"status": "success", "message": "Cancellation requested"}
 
+
 @router.post("/save")
-async def save_processed_subtitles(req: SaveRequest, db: Session = Depends(get_db)):
+async def save_processed_subtitles(req: SaveRequest, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     """前端微調後，儲存最終版的字幕"""
-    db_task = db.query(YouTubeTask).filter(YouTubeTask.id == req.task_id).first()
+    if req.task_type == "asr":
+        db_task = db.query(Task).filter(Task.id == req.task_id, Task.owner_id == current_user["owner_id"]).first()
+    else:
+        db_task = db.query(YouTubeTask).filter(YouTubeTask.id == req.task_id, YouTubeTask.owner_id == current_user["owner_id"]).first()
+        
     if not db_task:
         raise HTTPException(status_code=404, detail="Task not found")
         

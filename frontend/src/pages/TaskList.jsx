@@ -1,3 +1,4 @@
+import { fetchWithAuth } from '../utils/api';
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 
@@ -28,7 +29,7 @@ export default function TaskList() {
     const fetchTasks = async () => {
         try {
             const params = filter !== 'all' ? `?status=${filter}` : ''
-            const res = await fetch(`/api/tasks${params}`)
+            const res = await fetchWithAuth(`/api/tasks${params}`)
             const data = await res.json()
             setTasks(data)
         } catch (err) {
@@ -48,7 +49,7 @@ export default function TaskList() {
         e.stopPropagation()
         if (!confirm('確定要刪除此任務？')) return
         try {
-            await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' })
+            await fetchWithAuth(`/api/tasks/${taskId}`, { method: 'DELETE' })
             setTasks(prev => prev.filter(t => t.id !== taskId))
         } catch (err) {
             console.error('Delete failed:', err)

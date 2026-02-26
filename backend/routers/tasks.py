@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from backend.database import Task, get_db, init_db
 from backend.schemas import TaskResponse, TaskDetailResponse, ConfigResponse
+from backend.auth_utils import get_current_user
 
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -65,6 +66,7 @@ async def create_task(
     enable_diarization: bool = Form(True),
     to_traditional: bool = Form(True),
     db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
 ):
     """上傳音訊並建立 ASR 任務"""
     # 驗證模型和語言
@@ -83,6 +85,7 @@ async def create_task(
 
     # 建立任務紀錄
     task = Task(
+        owner_id=current_user["owner_id"],
         filename=file.filename,
         status="pending",
         model=model,
@@ -114,9 +117,10 @@ def list_tasks(
     skip: int = 0,
     limit: int = 50,
     db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
 ):
     """查詢任務清單"""
-    query = db.query(Task)
+    query = db.query(Task).filter(Task.owner_id == current_user["owner_id"])
     if status:
         query = query.filter(Task.status == status)
     tasks = query.order_by(Task.created_at.desc()).offset(skip).limit(limit).all()
@@ -124,9 +128,9 @@ def list_tasks(
 
 
 @router.get("/tasks/{task_id}", response_model=TaskDetailResponse)
-def get_task(task_id: int, db: Session = Depends(get_db)):
+def get_task(task_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     """查詢單一任務詳情（含結果）"""
-    task = db.query(Task).filter(Task.id == task_id).first()
+    task = db.query(Task).filter(Task.id == task_id, Task.owner_id == current_user["owner_id"]).first()
     if not task:
         raise HTTPException(status_code=404, detail="任務不存在")
 
@@ -151,9 +155,9 @@ def get_task(task_id: int, db: Session = Depends(get_db)):
 
 
 @router.delete("/tasks/{task_id}")
-def delete_task(task_id: int, db: Session = Depends(get_db)):
+def delete_task(task_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     """刪除任務"""
-    task = db.query(Task).filter(Task.id == task_id).first()
+    task = db.query(Task).filter(Task.id == task_id, Task.owner_id == current_user["owner_id"]).first()
     if not task:
         raise HTTPException(status_code=404, detail="任務不存在")
     db.delete(task)
@@ -166,9 +170,9 @@ def delete_task(task_id: int, db: Session = Depends(get_db)):
 # ============================================
 
 @router.get("/tasks/{task_id}/progress")
-async def task_progress(task_id: int, db: Session = Depends(get_db)):
+async def task_progress(task_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     """SSE 即時進度推送"""
-    task = db.query(Task).filter(Task.id == task_id).first()
+    task = db.query(Task).filter(Task.id == task_id, Task.owner_id == current_user["owner_id"]).first()
     if not task:
         raise HTTPException(status_code=404, detail="任務不存在")
 
@@ -204,13 +208,13 @@ async def task_progress(task_id: int, db: Session = Depends(get_db)):
 # ============================================
 
 @router.get("/tasks/{task_id}/export/{format_type}")
-def export_task(task_id: int, format_type: str, variant: str = "merged", db: Session = Depends(get_db)):
+def export_task(task_id: int, format_type: str, variant: str = "merged", db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     """
     匯出結果
     format_type: txt / srt
     variant: merged / raw / subtitle
     """
-    task = db.query(Task).filter(Task.id == task_id).first()
+    task = db.query(Task).filter(Task.id == task_id, Task.owner_id == current_user["owner_id"]).first()
     if not task:
         raise HTTPException(status_code=404, detail="任務不存在")
     if task.status != "completed":

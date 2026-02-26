@@ -21,11 +21,23 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 
+class User(Base):
+    """使用者模型"""
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    email = Column(String(255), unique=True, index=True, nullable=False)
+    verification_code = Column(String(6), nullable=True)
+    code_expires_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class Task(Base):
     """ASR 任務模型"""
     __tablename__ = "tasks"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    owner_id = Column(String(255), index=True, nullable=False, default="guest") # email or guest UUID
     filename = Column(String(255), nullable=False)
     status = Column(String(20), default="pending")  # pending / processing / completed / failed
     model = Column(String(100), nullable=False)
@@ -59,6 +71,7 @@ class YouTubeTask(Base):
     __tablename__ = "youtube_tasks"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    owner_id = Column(String(255), index=True, nullable=False, default="guest") # email or guest UUID
     video_id = Column(String(20), nullable=False)
     video_title = Column(String(500), nullable=True)
     status = Column(String(20), default="pending")
