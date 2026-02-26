@@ -148,7 +148,7 @@ def get_task(task_id: int, db: Session = Depends(get_db), current_user: dict = D
         error_message=task.error_message,
         created_at=task.created_at,
         completed_at=task.completed_at,
-        merged_result=task.get_merged_result(),
+        merged_result=task.get_sentences(),
         raw_text=task.raw_text,
         sentences=task.get_sentences(),
     )
@@ -220,7 +220,7 @@ def export_task(task_id: int, format_type: str, variant: str = "merged", db: Ses
     if task.status != "completed":
         raise HTTPException(status_code=400, detail="任務尚未完成")
 
-    segments = task.get_merged_result()
+    segments = task.get_sentences()
     sentences = task.get_sentences()
     raw_text = task.raw_text or ""
     base_name = Path(task.filename).stem
@@ -323,9 +323,9 @@ def _run_asr_task(task_id: int, audio_path: str, model: str, language: str,
         )
 
         task.status = "completed"
-        task.set_merged_result(result["merged"])
         task.raw_text = result["raw_text"]
         task.set_sentences(result["sentences"])
+        task.set_chars(result.get("chars", []))
         task.progress = 100.0
         task.progress_message = "完成"
         task.completed_at = datetime.now(timezone.utc)

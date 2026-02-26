@@ -255,6 +255,47 @@ def get_youtube_task(task_id: int, db: Session = Depends(get_db), current_user: 
     )
 
 
+from pydantic import BaseModel
+class ResegmentRequest(BaseModel):
+    max_sentence_chars: int = 30
+    force_cut_chars: int = 50
+
+@router.post("/{task_id}/resegment")
+def resegment_youtube_task(
+    task_id: int, 
+    req: ResegmentRequest,
+    db: Session = Depends(get_db), 
+    current_user: dict = Depends(get_current_user)
+):
+    """重新計算分句，無需重新執行 ASR 模型"""
+    task = db.query(YouTubeTask).filter(YouTubeTask.id == task_id, YouTubeTask.owner_id == current_user["owner_id"]).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="任務不存在")
+    if task.status != "completed":
+        raise HTTPException(status_code=400, detail="任務尚未完成，無法重新分句")
+        
+    chars = task.get_chars()
+    if not chars:
+        raise HTTPException(status_code=400, detail="此任務缺少 raw chars 資訊，請重新上傳分析")
+        
+    engine = ASREngine(device="cpu") # We don't need load_model() for merge
+    diar_segments = [{"start": 0.0, "end": 999999.0, "speaker": "UNKNOWN"}]
+    
+    new_sentences = engine.build_sentences_from_chars(
+        chars=chars,
+        diar_segments=diar_segments,
+        mode="subtitle",
+        max_sentence_chars=req.max_sentence_chars,
+        force_cut_chars=req.force_cut_chars,
+        to_traditional=True, # For simplicity
+    )
+    
+    task.set_sentences(new_sentences)
+    db.commit()
+    
+    return {"message": "success", "sentences": new_sentences}
+
+
 @router.delete("/{task_id}", status_code=204)
 def delete_youtube_task(task_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     """刪除 YouTube 任務"""
@@ -438,6 +479,7 @@ def _run_youtube_task(task_id: int, video_id: str, model_key: str, language_key:
         # ── 3. 儲存結果 ──
         task.status = "completed"
         task.set_sentences(result["sentences"])
+        task.set_chars(result.get("chars", []))
         task.progress = 100.0
         task.progress_message = "完成"
         task.completed_at = datetime.now(timezone.utc)

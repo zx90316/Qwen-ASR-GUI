@@ -46,18 +46,19 @@ class Task(Base):
     to_traditional = Column(Boolean, default=True)
     progress = Column(Float, default=0.0)
     progress_message = Column(String(255), default="等待中")
-    merged_result = Column(Text, nullable=True)    # JSON string
     raw_text = Column(Text, nullable=True)
+    chars = Column(Text, nullable=True)             # JSON string of raw character timestamps
     sentences = Column(Text, nullable=True)         # JSON string
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     completed_at = Column(DateTime, nullable=True)
 
-    def set_merged_result(self, data):
-        self.merged_result = json.dumps(data, ensure_ascii=False) if data else None
 
-    def get_merged_result(self):
-        return json.loads(self.merged_result) if self.merged_result else []
+    def set_chars(self, data):
+        self.chars = json.dumps(data, ensure_ascii=False) if data else None
+
+    def get_chars(self):
+        return json.loads(self.chars) if self.chars else []
 
     def set_sentences(self, data):
         self.sentences = json.dumps(data, ensure_ascii=False) if data else None
@@ -79,10 +80,17 @@ class YouTubeTask(Base):
     language = Column(String(50), nullable=False)
     progress = Column(Float, default=0.0)
     progress_message = Column(String(255), default="等待中")
+    chars = Column(Text, nullable=True)             # JSON string of raw character timestamps
     sentences = Column(Text, nullable=True)         # JSON string
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     completed_at = Column(DateTime, nullable=True)
+
+    def set_chars(self, data):
+        self.chars = json.dumps(data, ensure_ascii=False) if data else None
+
+    def get_chars(self):
+        return json.loads(self.chars) if self.chars else []
 
     def set_sentences(self, data):
         self.sentences = json.dumps(data, ensure_ascii=False) if data else None

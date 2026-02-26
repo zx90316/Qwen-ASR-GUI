@@ -352,7 +352,10 @@ class ASREngine:
         diar_segments: List[Dict],
         gap_threshold: float = 1.0,
         to_traditional: bool = True,
-    ) -> List[Dict[str, Any]]:
+        mode: str = "subtitle",
+        max_sentence_chars: int = 30,
+        force_cut_chars: int = 50,
+    ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         """合併 ASR 字元級對齊與語者分離結果"""
         self._progress(80, "合併 ASR 與語者分離結果...")
 
@@ -425,52 +428,111 @@ class ASREngine:
             text = "".join(r.text for r in asr_results)
             if to_traditional:
                 text = _get_cc().convert(text)
+            dummy_chars = [{"start": 0.0, "end": 0.0, "speaker": "UNKNOWN", "text": text}]
+            return dummy_chars, dummy_chars
+
+        final = self.build_sentences_from_chars(
+            chars=chars,
+            diar_segments=diar_segments,
+            mode=mode,
+            max_sentence_chars=max_sentence_chars,
+            force_cut_chars=force_cut_chars,
+            to_traditional=to_traditional,
+        )
+        return final, chars
+
+    def build_sentences_from_chars(
+        self,
+        chars: List[Dict[str, Any]],
+        diar_segments: List[Dict],
+        mode: str = "subtitle",
+        max_sentence_chars: int = 30,
+        force_cut_chars: int = 50,
+        to_traditional: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """從字元級對齊結果重新分句與匹配語者"""
+        if not chars:
+            text = ""
+            if to_traditional:
+                text = _get_cc().convert(text)
             return [{"start": 0.0, "end": 0.0, "speaker": "UNKNOWN", "text": text}]
 
-        # Step 2: 將字元切分為句子（以標點為斷點）
-        sentence_end_chars = set('。！？!?')
-        comma_chars = set('，,')
-        max_sentence_chars = 30
-        force_cut_chars = 50
-
+        # Step 2: 處理分段
         sentences_from_chars = []  # [{start, end, text, chars_list}, ...]
         buf_chars = []
 
-        for char in chars:
-            buf_chars.append(char)
-            ch = char["text"]
+        if mode == "subtitle":
+            sentence_end_chars = set('。！？!?')
+            comma_chars = set('，,')
+            for char in chars:
+                buf_chars.append(char)
+                ch = char["text"]
 
-            should_cut = False
-            # 句末標點斷句
-            if len(ch) == 1 and ch in sentence_end_chars:
-                should_cut = True
-            elif len(ch) > 1 and ch[-1] in sentence_end_chars:
-                should_cut = True
-            # 逗號補切（超過 max_sentence_chars）
-            buf_text_len = sum(len(c["text"]) for c in buf_chars)
-            if not should_cut and buf_text_len >= max_sentence_chars:
-                if len(ch) == 1 and ch in comma_chars:
+                should_cut = False
+                # 句末標點斷句
+                if len(ch) == 1 and ch in sentence_end_chars:
                     should_cut = True
-                elif len(ch) > 1 and ch[-1] in comma_chars:
+                elif len(ch) > 1 and ch[-1] in sentence_end_chars:
                     should_cut = True
-            # 強制切斷
-            if not should_cut and buf_text_len >= force_cut_chars:
-                should_cut = True
+                # 逗號補切（超過 max_sentence_chars）
+                buf_text_len = sum(len(c["text"]) for c in buf_chars)
+                if not should_cut and buf_text_len >= max_sentence_chars:
+                    if len(ch) == 1 and ch in comma_chars:
+                        should_cut = True
+                    elif len(ch) > 1 and ch[-1] in comma_chars:
+                        should_cut = True
+                # 強制切斷
+                if not should_cut and buf_text_len >= force_cut_chars:
+                    should_cut = True
 
-            if should_cut and buf_chars:
-                # 尋找真正有字元的第一個元素做為 start (避免標點符號開頭導致時間不準)
-                valid_start = buf_chars[0]["start"]
-                for c in buf_chars:
-                    if c["text"].strip() and c["end"] > c["start"]:
-                        valid_start = c["start"]
-                        break
-                        
-                sentences_from_chars.append({
-                    "start": valid_start,
-                    "end": buf_chars[-1]["end"],
-                    "text": "".join(c["text"] for c in buf_chars),
-                })
-                buf_chars = []
+                if should_cut and buf_chars:
+                    valid_start = buf_chars[0]["start"]
+                    for c in buf_chars:
+                        if c["text"].strip() and c["end"] > c["start"]:
+                            valid_start = c["start"]
+                            break
+                    sentences_from_chars.append({
+                        "start": valid_start,
+                        "end": buf_chars[-1]["end"],
+                        "text": "".join(c["text"] for c in buf_chars),
+                    })
+                    buf_chars = []
+        else:
+            # Diarization mode: split cautiously without char counts limits mostly
+            sentence_end_chars = set('。！？!?')
+            for i, char in enumerate(chars):
+                buf_chars.append(char)
+                ch = char["text"]
+
+                should_cut = False
+                if len(ch) == 1 and ch in sentence_end_chars:
+                    should_cut = True
+                elif len(ch) > 1 and ch[-1] in sentence_end_chars:
+                    should_cut = True
+                
+                # Check for large time gaps (e.g. > 1.5s) to split paragraphs
+                if i + 1 < len(chars):
+                    next_char = chars[i+1]
+                    if next_char["start"] - char["end"] > 1.5:
+                        should_cut = True
+                
+                # Only force cut if it's crazy long (> 150 chars)
+                buf_text_len = sum(len(c["text"]) for c in buf_chars)
+                if not should_cut and buf_text_len >= 150:
+                    should_cut = True
+
+                if should_cut and buf_chars:
+                    valid_start = buf_chars[0]["start"]
+                    for c in buf_chars:
+                        if c["text"].strip() and c["end"] > c["start"]:
+                            valid_start = c["start"]
+                            break
+                    sentences_from_chars.append({
+                        "start": valid_start,
+                        "end": buf_chars[-1]["end"],
+                        "text": "".join(c["text"] for c in buf_chars),
+                    })
+                    buf_chars = []
 
         # 處理剩餘
         if buf_chars:
@@ -487,21 +549,21 @@ class ASREngine:
             })
 
         if not sentences_from_chars:
-            text = "".join(r.text for r in asr_results)
+            text = "".join(c["text"] for c in chars)
             if to_traditional:
                 converter = _get_cc()
                 text = converter.convert(text)
             return [{"start": 0.0, "end": 0.0, "speaker": "UNKNOWN", "text": text}]
 
         # Step 3: 為每個句子匹配語者（依時間重疊比例）
-        last_speaker = diar_segments[0]["speaker"]
+        last_speaker = diar_segments[0]["speaker"] if diar_segments else "UNKNOWN"
 
         for sent in sentences_from_chars:
             sent_start = sent["start"]
             sent_end = sent["end"]
             sent_duration = sent_end - sent_start
 
-            if sent_duration <= 0:
+            if sent_duration <= 0 or not diar_segments:
                 sent["speaker"] = last_speaker
                 continue
 
@@ -541,13 +603,24 @@ class ASREngine:
                 else:
                     sent["speaker"] = last_speaker
 
-        # Step 4: 合併相鄰的極短碎片 (例如只有 1~2 字的孤立片段，若與前句距離極近則合併)
+        # Step 4: 合併同語者的連續句子 (針對 diarization 模式特別重要)
         merged = [sentences_from_chars[0].copy()]
         for sent in sentences_from_chars[1:]:
             prev = merged[-1]
             time_gap = sent["start"] - prev["end"]
-            # 只在片段過短 (< 5 字) 且時間非常近時才合併，保留原始句子結構
-            if sent["speaker"] == prev["speaker"] and time_gap < 0.2 and len(sent["text"]) < 5 and len(prev["text"]) < 40:
+            
+            should_merge = False
+            if sent["speaker"] == prev["speaker"]:
+                if mode == "diarization":
+                    # 在 diarization 模式下，只要是同個語者且中間沒有過長的靜音，就合併成同一句
+                    if time_gap < 1.5:
+                        should_merge = True
+                else:
+                    # 在 subtitle 模式下，只有極短的碎片才合併，避免字幕過長
+                    if time_gap < 0.2 and len(sent["text"]) < 5 and len(prev["text"]) < 40:
+                        should_merge = True
+
+            if should_merge:
                 prev["end"] = sent["end"]
                 prev["text"] += sent["text"]
             else:
@@ -567,6 +640,8 @@ class ASREngine:
             converter = _get_cc()
             for seg in final:
                 seg["text"] = converter.convert(seg["text"])
+            for c in chars:
+                c["text"] = converter.convert(c["text"])
 
         self._progress(90, f"合併完成：{len(final)} 個片段")
         return final
@@ -630,10 +705,12 @@ class ASREngine:
                 diar_segments = []
 
             # Step 4: 合併
-            segments = self.merge(
+            mode = "diarization" if enable_diarization else "subtitle"
+            segments, chars = self.merge(
                 asr_results,
                 diar_segments,
                 to_traditional=to_traditional,
+                mode=mode,
             )
 
             self._progress(95, "處理完成")
@@ -641,6 +718,7 @@ class ASREngine:
                 "merged": segments,
                 "raw_text": raw_text,
                 "sentences": segments,
+                "chars": chars,
             }
 
         finally:
