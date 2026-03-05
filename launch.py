@@ -18,6 +18,7 @@ def ensure_dependencies():
     """確保管理 GUI 的依賴已安裝"""
     deps = {
         "ttkbootstrap": "ttkbootstrap>=1.10.0",
+        "dotenv": "python-dotenv",
     }
 
     missing = []
@@ -45,7 +46,8 @@ def ensure_dependencies():
 
 def main():
     # 確保依賴
-    ensure_dependencies()
+    if not getattr(sys, 'frozen', False):
+        ensure_dependencies()
 
     # 啟動管理面板
     from manager.app import main as app_main

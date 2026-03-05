@@ -11,8 +11,15 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+import sys
+
 # 專案根目錄（manager/ 的上層）
-PROJECT_ROOT = Path(__file__).parent.parent.resolve()
+if getattr(sys, 'frozen', False):
+    # 執行為 PyInstaller 打包的 .exe
+    PROJECT_ROOT = Path(sys.executable).parent.resolve()
+else:
+    # 正常 Python 腳本執行
+    PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 
 # 設定檔路徑
 CONFIG_FILE = PROJECT_ROOT / "manager_config.json"

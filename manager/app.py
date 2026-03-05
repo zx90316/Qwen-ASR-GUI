@@ -45,6 +45,8 @@ from manager.env_manager import (
 from manager.gpu_detector import detect_gpu_info
 from manager.git_manager import git_pull, check_for_updates, get_current_version, is_git_repo
 from manager.network_utils import check_internet
+from manager.ffmpeg_utils import is_ffmpeg_installed, download_ffmpeg
+from manager.env_editor import open_env_editor
 
 logger = logging.getLogger(__name__)
 
@@ -383,6 +385,19 @@ class ManagerApp:
         )
         self.btn_npm_install.pack(side=LEFT)
 
+        # FFmpeg
+        ffmpeg_frame = ttk.LabelFrame(inner, text="  🎥 系統工具 (FFmpeg)  ")
+        ffmpeg_frame.pack(fill=X, pady=(0, 10), ipadx=10, ipady=8)
+
+        self.ffmpeg_status_label = ttk.Label(ffmpeg_frame, text="FFmpeg: 檢測中...", font=("", 10))
+        self.ffmpeg_status_label.pack(anchor=W, pady=(0, 8))
+
+        self.btn_download_ffmpeg = ttk.Button(
+            ffmpeg_frame, text="📥 自動下載 FFmpeg", bootstyle="info",
+            command=lambda: self._run_async(self._download_ffmpeg),
+        )
+        self.btn_download_ffmpeg.pack(side=LEFT)
+
         # 重新安裝
         ttk.Separator(inner, orient=HORIZONTAL).pack(fill=X, pady=10)
 
@@ -401,6 +416,15 @@ class ManagerApp:
 
         inner = ttk.Frame(frame)
         inner.pack(fill=BOTH, expand=True, padx=10, pady=10)
+
+        # .env 設定檔
+        env_frame = ttk.LabelFrame(inner, text="  📝 環境變數  ")
+        env_frame.pack(fill=X, pady=(0, 10), ipadx=10, ipady=8)
+
+        ttk.Button(
+            env_frame, text="⚙️ 設定 .env 參數", bootstyle="info",
+            command=self._open_env_editor, width=20
+        ).pack(anchor=W)
 
         # 自動行為
         auto_frame = ttk.LabelFrame(inner, text="  🤖 自動化  ")
@@ -621,6 +645,18 @@ class ManagerApp:
         install_frontend_deps(on_output=lambda line: self._append_console("system", line))
         self.root.after_idle(self._update_install_status)
 
+    def _open_env_editor(self):
+        self._append_console("system", "📝 開啟 .env 編輯器")
+        open_env_editor(self.root, on_saved=lambda: self._append_console("system", "✅ .env 檔案已儲存"))
+
+    def _download_ffmpeg(self):
+        self._append_console("system", "━" * 50)
+        self.root.after_idle(lambda: self.btn_download_ffmpeg.configure(state="disabled"))
+        try:
+            download_ffmpeg(on_output=lambda line: self._append_console("system", line))
+        finally:
+            self.root.after_idle(self._update_install_status)
+
     def _confirm_reinstall(self):
         """確認重新安裝"""
         from tkinter import messagebox
@@ -730,6 +766,7 @@ class ManagerApp:
             "─" * 50,
             f"  .venv:          {'✅ 已建立' if is_venv_exists() else '❌ 未建立'}",
             f"  node_modules:   {'✅ 已安裝' if is_node_modules_exists() else '❌ 未安裝'}",
+            f"  FFmpeg:         {'✅ 已安裝' if is_ffmpeg_installed() else '❌ 未安裝'}",
             "",
             "═" * 50,
         ])
@@ -763,6 +800,17 @@ class ManagerApp:
             text=f"node_modules: {'✅ 已安裝' if nm else '❌ 未安裝'}",
             bootstyle="success" if nm else "danger",
         )
+
+        ffmpeg_ok = is_ffmpeg_installed()
+        if hasattr(self, 'ffmpeg_status_label'):
+            self.ffmpeg_status_label.configure(
+                text=f"FFmpeg: {'✅ 已安裝' if ffmpeg_ok else '❌ 未安裝'}",
+                bootstyle="success" if ffmpeg_ok else "danger",
+            )
+            if ffmpeg_ok:
+                self.btn_download_ffmpeg.configure(state="disabled")
+            else:
+                self.btn_download_ffmpeg.configure(state="normal")
 
     def _update_version_info(self):
         """更新版本顯示"""
