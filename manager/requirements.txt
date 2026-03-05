@@ -1,0 +1,3 @@
+# Qwen-ASR-GUI Manager 依賴
+# 管理面板自身需要的套件（與主專案 requirements.txt 分開）
+ttkbootstrap>=1.10.0

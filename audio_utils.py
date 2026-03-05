@@ -48,7 +48,7 @@ def apply_torchaudio_patches():
     torchaudio.list_audio_backends = lambda: ["soundfile"]
     torchaudio.get_audio_backend = lambda: "soundfile"
     torchaudio.AudioMetaData = MockAudioMetaData
-    print("✅ torchaudio 補丁已套用（使用 soundfile 後端）")
+    print("[OK] torchaudio 補丁已套用（使用 soundfile 後端）")
 
 
 # ============================================
@@ -115,7 +115,7 @@ def convert_to_wav(
             for packet in output_stream.encode():
                 output_container.mux(packet)
 
-    print(f"✅ 音訊已轉換: {output_path}")
+    print(f"[OK] 音訊已轉換: {output_path}")
     return str(output_path)
 
 

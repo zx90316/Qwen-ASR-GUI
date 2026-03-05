@@ -35,3 +35,5 @@ python-dotenv
 # LLM Providers
 openai
 google-genai
+PyJWT
+pydantic[email]
