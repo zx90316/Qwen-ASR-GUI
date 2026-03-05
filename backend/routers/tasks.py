@@ -174,6 +174,7 @@ def get_task(task_id: int, db: Session = Depends(get_db), current_user: dict = D
         merged_result=task.get_sentences(),
         raw_text=task.raw_text,
         sentences=task.get_sentences(),
+        diarization_result=task.get_diarization_result(),
     )
 
 
@@ -251,7 +252,7 @@ def export_task(task_id: int, format_type: str, variant: str = "merged", db: Ses
     if task.status != "completed":
         raise HTTPException(status_code=400, detail="任務尚未完成")
 
-    segments = task.get_sentences()
+    segments = task.get_diarization_result() or task.get_sentences()
     sentences = task.get_sentences()
     raw_text = task.raw_text or ""
     base_name = Path(task.filename).stem
@@ -264,8 +265,9 @@ def export_task(task_id: int, format_type: str, variant: str = "merged", db: Ses
                 spk = seg.get("speaker", "")
                 start = ASREngine.format_time(seg["start"])
                 end = ASREngine.format_time(seg["end"])
+                text = seg.get("combined_text", seg.get("text", ""))
                 prefix = f"[{spk}] " if spk else ""
-                buf.write(f"{prefix}({start} → {end})\n{seg['text']}\n\n")
+                buf.write(f"{prefix}({start} → {end})\n{text}\n\n")
             filename = f"{base_name}_merged.txt"
         elif variant == "raw":
             buf.write(raw_text)
@@ -281,16 +283,22 @@ def export_task(task_id: int, format_type: str, variant: str = "merged", db: Ses
         media_type = "text/plain"
 
     elif format_type == "srt":
-        target = segments if variant == "merged" else sentences
-        for idx, seg in enumerate(target, 1):
-            start_srt = ASREngine.format_srt_time(seg["start"])
-            end_srt = ASREngine.format_srt_time(seg["end"])
-            text = seg["text"]
-            if variant == "merged":
+        if variant == "merged":
+            # 語者歸組用 diarization 資料
+            for idx, seg in enumerate(segments, 1):
+                start_srt = ASREngine.format_srt_time(seg["start"])
+                end_srt = ASREngine.format_srt_time(seg["end"])
                 spk = seg.get("speaker", "")
+                text = seg.get("combined_text", seg.get("text", ""))
                 if spk:
                     text = f"[{spk}] {text}"
-            buf.write(f"{idx}\n{start_srt} --> {end_srt}\n{text}\n\n")
+                buf.write(f"{idx}\n{start_srt} --> {end_srt}\n{text}\n\n")
+        else:
+            # 字幕用 sentences 資料
+            for idx, seg in enumerate(sentences, 1):
+                start_srt = ASREngine.format_srt_time(seg["start"])
+                end_srt = ASREngine.format_srt_time(seg["end"])
+                buf.write(f"{idx}\n{start_srt} --> {end_srt}\n{seg['text']}\n\n")
         filename = f"{base_name}_{variant}.srt"
         media_type = "text/srt"
     else:
@@ -306,6 +314,59 @@ def export_task(task_id: int, format_type: str, variant: str = "merged", db: Ses
         media_type=media_type,
         headers={"Content-Disposition": f"attachment; filename*=utf-8''{encoded_filename}"},
     )
+
+
+# ============================================
+# 去除標點
+# ============================================
+
+from pydantic import BaseModel as _BaseModel
+
+class RemovePunctuationRequest(_BaseModel):
+    mode: str = "all"  # "all" | "sentence_end"
+
+@router.post("/tasks/{task_id}/remove-punctuation")
+def remove_punctuation(
+    task_id: int,
+    req: RemovePunctuationRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """去除標點符號（全部 / 句末），儲存結果並支援復原"""
+    import re
+    task = db.query(Task).filter(Task.id == task_id, Task.owner_id == current_user["owner_id"]).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="任務不存在")
+    if task.status != "completed":
+        raise HTTPException(status_code=400, detail="任務尚未完成")
+
+    sentences = task.get_sentences()
+    if not sentences:
+        raise HTTPException(status_code=400, detail="沒有可處理的字幕")
+
+    # 定義標點集合
+    all_punct = r'[，。！？、；：＂＇（）《》【】…—·,.:;!?\'"()\[\]{}~@#$%^&*+\-=/<>]'
+    sentence_end_punct = r'[。！？!?]'
+
+    updated = []
+    for sent in sentences:
+        original = sent["text"]
+        # 保存原始文字（若尚未被儲存）
+        if "original_text" not in sent:
+            sent["original_text"] = original
+
+        if req.mode == "all":
+            cleaned = re.sub(all_punct, '', original)
+        else:  # sentence_end
+            cleaned = re.sub(sentence_end_punct, '', original)
+
+        sent["text"] = cleaned
+        updated.append(sent)
+
+    task.set_sentences(updated)
+    db.commit()
+
+    return {"message": "success", "sentences": updated}
 
 
 # ============================================
@@ -357,6 +418,8 @@ def _run_asr_task(task_id: int, audio_path: str, model: str, language: str,
         task.raw_text = result["raw_text"]
         task.set_sentences(result["sentences"])
         task.set_chars(result.get("chars", []))
+        task.set_diarization_result(result.get("diarization_result"))
+        task.set_diar_segments(result.get("diar_segments", []))
         task.progress = 100.0
         task.progress_message = "完成"
         task.completed_at = datetime.now(timezone.utc)

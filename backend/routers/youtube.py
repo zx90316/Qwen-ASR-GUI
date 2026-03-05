@@ -263,6 +263,7 @@ def get_youtube_task(task_id: int, db: Session = Depends(get_db), current_user: 
         raw_text=task.raw_text,
         merged_result=task.get_sentences(),
         sentences=task.get_sentences(),
+        diarization_result=task.get_diarization_result(),
     )
 
 

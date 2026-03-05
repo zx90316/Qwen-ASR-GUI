@@ -28,6 +28,18 @@ def migrate():
         else:
             print("'chars' column already exists in 'tasks' table.")
 
+        if 'diarization_result' not in columns:
+            print("Adding 'diarization_result' column to 'tasks' table...")
+            cursor.execute("ALTER TABLE tasks ADD COLUMN diarization_result TEXT")
+        else:
+            print("'diarization_result' column already exists in 'tasks' table.")
+
+        if 'diar_segments' not in columns:
+            print("Adding 'diar_segments' column to 'tasks' table...")
+            cursor.execute("ALTER TABLE tasks ADD COLUMN diar_segments TEXT")
+        else:
+            print("'diar_segments' column already exists in 'tasks' table.")
+
         # Check and add to youtube_tasks
         cursor.execute("PRAGMA table_info(youtube_tasks)")
         columns = [info[1] for info in cursor.fetchall()]

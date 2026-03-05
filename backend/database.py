@@ -50,7 +50,9 @@ class Task(Base):
     progress_message = Column(String(255), default="等待中")
     raw_text = Column(Text, nullable=True)
     chars = Column(Text, nullable=True)             # JSON string of raw character timestamps
-    sentences = Column(Text, nullable=True)         # JSON string
+    sentences = Column(Text, nullable=True)         # JSON string — 字幕短句
+    diarization_result = Column(Text, nullable=True) # JSON string — 語者歸組段落
+    diar_segments = Column(Text, nullable=True)     # JSON string — 語者分離原始區段
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     completed_at = Column(DateTime, nullable=True)
@@ -67,6 +69,18 @@ class Task(Base):
 
     def get_sentences(self):
         return json.loads(self.sentences) if self.sentences else []
+
+    def set_diarization_result(self, data):
+        self.diarization_result = json.dumps(data, ensure_ascii=False) if data else None
+
+    def get_diarization_result(self):
+        return json.loads(self.diarization_result) if self.diarization_result else None
+
+    def set_diar_segments(self, data):
+        self.diar_segments = json.dumps(data, ensure_ascii=False) if data else None
+
+    def get_diar_segments(self):
+        return json.loads(self.diar_segments) if self.diar_segments else []
 
 
 

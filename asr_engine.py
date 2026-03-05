@@ -647,6 +647,74 @@ class ASREngine:
         return final
 
     # ============================================
+    # 語者歸組
+    # ============================================
+
+    @staticmethod
+    def group_by_speaker(
+        sentences: List[Dict[str, Any]],
+        gap_threshold: float = 1.5,
+    ) -> List[Dict[str, Any]]:
+        """
+        將語者分離逐句結果歸組為段落結構。
+        同語者 + 間隔 < gap_threshold → 合併為同一段落。
+
+        輸入: [{start, end, speaker, text}, ...]
+        輸出: [{speaker, start, end, segments: [{start, end, text}], combined_text}, ...]
+        """
+        if not sentences:
+            return []
+
+        groups = []
+        current_group = {
+            "speaker": sentences[0].get("speaker", "UNKNOWN"),
+            "start": sentences[0]["start"],
+            "end": sentences[0]["end"],
+            "segments": [{
+                "start": sentences[0]["start"],
+                "end": sentences[0]["end"],
+                "text": sentences[0]["text"],
+            }],
+        }
+
+        for sent in sentences[1:]:
+            spk = sent.get("speaker", "UNKNOWN")
+            time_gap = sent["start"] - current_group["end"]
+
+            if spk == current_group["speaker"] and time_gap < gap_threshold:
+                # 同語者且間隔短 → 併入當前段落
+                current_group["end"] = sent["end"]
+                current_group["segments"].append({
+                    "start": sent["start"],
+                    "end": sent["end"],
+                    "text": sent["text"],
+                })
+            else:
+                # 語者切換或間隔過長 → 結束舊段落，開新段落
+                current_group["combined_text"] = "".join(
+                    seg["text"] for seg in current_group["segments"]
+                )
+                groups.append(current_group)
+                current_group = {
+                    "speaker": spk,
+                    "start": sent["start"],
+                    "end": sent["end"],
+                    "segments": [{
+                        "start": sent["start"],
+                        "end": sent["end"],
+                        "text": sent["text"],
+                    }],
+                }
+
+        # 處理最後一個段落
+        current_group["combined_text"] = "".join(
+            seg["text"] for seg in current_group["segments"]
+        )
+        groups.append(current_group)
+
+        return groups
+
+    # ============================================
     # 完整流程
     # ============================================
 
@@ -704,21 +772,32 @@ class ASREngine:
             else:
                 diar_segments = []
 
-            # Step 4: 合併
-            mode = "diarization" if enable_diarization else "subtitle"
-            segments, chars = self.merge(
+            # Step 4: 產出字幕短句（subtitle mode）
+            subtitle_sentences, chars = self.merge(
                 asr_results,
                 diar_segments,
                 to_traditional=to_traditional,
-                mode=mode,
+                mode="subtitle",
             )
+
+            # Step 5: 產出語者歸組段落（diarization mode，不重跑 ASR）
+            diarization_result = None
+            if enable_diarization and diar_segments:
+                diar_sentences = self.build_sentences_from_chars(
+                    chars=chars,
+                    diar_segments=diar_segments,
+                    mode="diarization",
+                    to_traditional=False,  # chars 已經在 Step4 轉過繁體
+                )
+                diarization_result = self.group_by_speaker(diar_sentences)
 
             self._progress(95, "處理完成")
             return {
-                "merged": segments,
                 "raw_text": raw_text,
-                "sentences": segments,
+                "sentences": subtitle_sentences,
+                "diarization_result": diarization_result,
                 "chars": chars,
+                "diar_segments": diar_segments,
             }
 
         finally:

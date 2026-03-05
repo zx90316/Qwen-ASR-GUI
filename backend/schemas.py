@@ -44,6 +44,7 @@ class TaskDetailResponse(TaskResponse):
     merged_result: Optional[List[Any]] = None
     raw_text: Optional[str] = None
     sentences: Optional[List[Any]] = None
+    diarization_result: Optional[List[Any]] = None
 
     model_config = {"from_attributes": True}
 

@@ -46,7 +46,7 @@ diar_segments = [
     {"start": 2.0, "end": 5.0, "speaker": "SPEAKER_02"},
 ]
 
-result = engine.merge(asr_results, diar_segments, to_traditional=False)
+result, chars = engine.merge(asr_results, diar_segments, to_traditional=False)
 for seg in result:
     print(f"  [{seg['start']:.1f} -> {seg['end']:.1f}] {seg['speaker']}: {seg['text']}")
 print(f"  共 {len(result)} 個片段")
@@ -84,9 +84,39 @@ diar_segments2 = [
     {"start": mid_time, "end": t + 1.0, "speaker": "SPEAKER_02"},
 ]
 
-result2 = engine.merge(asr_results2, diar_segments2, to_traditional=False)
+result2, chars2_out = engine.merge(asr_results2, diar_segments2, to_traditional=False)
 for seg in result2:
     print(f"  [{seg['start']:.1f} -> {seg['end']:.1f}] {seg['speaker']}: {seg['text']}")
 print(f"  共 {len(result2)} 個片段")
+
+# ====================================================
+# 測試 3：語者歸組 (group_by_speaker)
+# ====================================================
+print("\n=== 測試 3: group_by_speaker 歸組 ===")
+
+test_sentences = [
+    {"start": 0.0, "end": 1.5, "speaker": "A", "text": "第一句，"},
+    {"start": 1.6, "end": 3.0, "speaker": "A", "text": "第二句。"},
+    {"start": 3.5, "end": 5.0, "speaker": "B", "text": "第三句。"},
+    {"start": 5.5, "end": 7.0, "speaker": "A", "text": "第四句。"},
+    {"start": 7.1, "end": 8.0, "speaker": "A", "text": "第五句。"},
+    # 大間隔
+    {"start": 20.0, "end": 22.0, "speaker": "A", "text": "長間隔後。"},
+]
+
+groups = ASREngine.group_by_speaker(test_sentences)
+for g in groups:
+    print(f"  [{g['speaker']}] ({g['start']:.1f} -> {g['end']:.1f}): {g['combined_text']}")
+    print(f"    內含 {len(g['segments'])} 個子句")
+print(f"  共 {len(groups)} 個歸組段落")
+
+assert len(groups) == 4, f"預期 4 個歸組段落，得到 {len(groups)}"
+assert groups[0]["speaker"] == "A"
+assert len(groups[0]["segments"]) == 2  # 第一句 + 第二句
+assert groups[1]["speaker"] == "B"
+assert groups[2]["speaker"] == "A"
+assert len(groups[2]["segments"]) == 2  # 第四句 + 第五句
+assert groups[3]["speaker"] == "A"  # 長間隔後的單獨段落
+assert len(groups[3]["segments"]) == 1
 
 print("\n✅ 測試完成！")

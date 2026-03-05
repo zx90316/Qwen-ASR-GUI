@@ -22,7 +22,7 @@ export default function TaskDetail() {
     const navigate = useNavigate()
     const [task, setTask] = useState(null)
     const [loading, setLoading] = useState(true)
-    const [viewMode, setViewMode] = useState('merged')
+    const [viewMode, setViewMode] = useState(null) // will be set after task loads
     const [exportOpen, setExportOpen] = useState(false)
     const exportRef = useRef(null)
 
@@ -32,6 +32,10 @@ export default function TaskDetail() {
             if (!res.ok) throw new Error('任務不存在')
             const data = await res.json()
             setTask(data)
+            // 設定預設 Tab
+            if (viewMode === null) {
+                setViewMode(data.enable_diarization ? 'merged' : 'sentences')
+            }
         } catch (err) {
             console.error(err)
         } finally {
@@ -232,6 +236,48 @@ export default function TaskDetail() {
         })
     }
 
+    // ── 去除標點符號 ──
+    const handleRemovePunctuation = async (mode) => {
+        if (!id) return
+        try {
+            const resp = await fetchWithAuth(`/api/tasks/${id}/remove-punctuation`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode })
+            })
+            if (resp.ok) {
+                const data = await resp.json()
+                setSentences(data.sentences)
+            }
+        } catch (e) {
+            console.error('去除標點失敗', e)
+        }
+    }
+
+    const handleRevertPunctuation = async () => {
+        // 復原標點：將所有有 original_text 的句子還原，並儲存
+        const reverted = sentences.map(s => {
+            if (s.original_text !== undefined) {
+                return { ...s, text: s.original_text, original_text: undefined }
+            }
+            return s
+        }).map(s => {
+            const { original_text, ...rest } = s
+            return rest
+        })
+        setSentences(reverted)
+        // 同步儲存到後端
+        try {
+            await fetchWithAuth('/api/llm/save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ task_id: id, task_type: 'asr', sentences: reverted })
+            })
+        } catch (e) {
+            console.error('儲存復原失敗', e)
+        }
+    }
+
     // 初始載入 + SSE 進度
     useEffect(() => {
         fetchTask()
@@ -404,12 +450,14 @@ export default function TaskDetail() {
             {isCompleted && (
                 <div className="card">
                     <div className="result-tabs">
-                        <button
-                            className={`result-tab ${viewMode === 'merged' ? 'active' : ''}`}
-                            onClick={() => setViewMode('merged')}
-                        >
-                            語者分離
-                        </button>
+                        {task.enable_diarization && (
+                            <button
+                                className={`result-tab ${viewMode === 'merged' ? 'active' : ''}`}
+                                onClick={() => setViewMode('merged')}
+                            >
+                                語者分離
+                            </button>
+                        )}
                         <button
                             className={`result-tab ${viewMode === 'sentences' ? 'active' : ''}`}
                             onClick={() => setViewMode('sentences')}
@@ -424,21 +472,27 @@ export default function TaskDetail() {
                         </button>
                     </div>
 
-                    {viewMode === 'merged' && task.merged_result && (
+                    {viewMode === 'merged' && task.diarization_result && (
                         <div>
-                            {task.merged_result.map((seg, i) => (
-                                <div key={i} className="segment-block fade-in" style={{ animationDelay: `${i * 0.03}s` }}>
-                                    <div className="segment-header">
-                                        {seg.speaker && (
-                                            <span className="speaker-badge">{seg.speaker}</span>
-                                        )}
+                            {task.diarization_result.map((group, i) => (
+                                <div key={i} className="segment-block fade-in" style={{ animationDelay: `${i * 0.03}s`, marginBottom: '16px' }}>
+                                    <div className="segment-header" style={{ marginBottom: '8px' }}>
+                                        <span className="speaker-badge">{group.speaker}</span>
                                         <span className="segment-time">
-                                            ⏱ {formatTime(seg.start)} → {formatTime(seg.end)}
+                                            ⏱ {formatTime(group.start)} → {formatTime(group.end)}
                                         </span>
                                     </div>
-                                    <div className="segment-text">{seg.text}</div>
+                                    <div className="segment-text" style={{ lineHeight: 1.8, fontSize: '0.95rem' }}>
+                                        {group.combined_text}
+                                    </div>
                                 </div>
                             ))}
+                        </div>
+                    )}
+
+                    {viewMode === 'merged' && !task.diarization_result && (
+                        <div className="empty-state" style={{ padding: '2rem' }}>
+                            <p style={{ color: 'var(--color-text-muted)' }}>語者分離結果尚未產生。請確認任務有啟用語者分離。</p>
                         </div>
                     )}
 
@@ -550,6 +604,28 @@ export default function TaskDetail() {
                                     </div>
                                 )}
                                 {llmError && <div style={{ color: 'var(--color-danger)', fontSize: '0.8rem', marginTop: '8px' }}>{llmError}</div>}
+                            </div>
+
+                            {/* ── 去除標點工具列 ── */}
+                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', margin: '0 0 12px 0', padding: '8px 12px', background: 'var(--color-bg)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)' }}>
+                                <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--color-text-muted)' }}>標點符號</span>
+                                <button className="btn btn-outline btn-sm" style={{ fontSize: '0.75rem' }}
+                                    onClick={() => handleRemovePunctuation('all')}
+                                    disabled={llmProgress >= 0}>
+                                    去除全部標點
+                                </button>
+                                <button className="btn btn-outline btn-sm" style={{ fontSize: '0.75rem' }}
+                                    onClick={() => handleRemovePunctuation('sentence_end')}
+                                    disabled={llmProgress >= 0}>
+                                    去除句末標點
+                                </button>
+                                {sentences.some(s => s.original_text !== undefined) && (
+                                    <button className="btn btn-outline btn-sm" style={{ fontSize: '0.75rem', color: 'var(--color-primary)', borderColor: 'var(--color-primary)' }}
+                                        onClick={handleRevertPunctuation}
+                                        disabled={llmProgress >= 0}>
+                                        ↩ 復原標點
+                                    </button>
+                                )}
                             </div>
 
                             {/* 字幕列表 */}
