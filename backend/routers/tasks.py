@@ -317,13 +317,59 @@ def export_task(task_id: int, format_type: str, variant: str = "merged", db: Ses
 
 
 # ============================================
-# 去除標點
+# 重新分句
 # ============================================
 
 from pydantic import BaseModel as _BaseModel
 
+class ResegmentRequest(_BaseModel):
+    max_sentence_chars: int = 30
+    force_cut_chars: int = 50
+
+@router.post("/tasks/{task_id}/resegment")
+def resegment_task(
+    task_id: int,
+    req: ResegmentRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """重新計算分句，無需重新執行 ASR 模型"""
+    task = db.query(Task).filter(Task.id == task_id, Task.owner_id == current_user["owner_id"]).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="任務不存在")
+    if task.status != "completed":
+        raise HTTPException(status_code=400, detail="任務尚未完成，無法重新分句")
+
+    chars = task.get_chars()
+    if not chars:
+        raise HTTPException(status_code=400, detail="此任務缺少 raw chars 資訊，請重新上傳分析")
+
+    engine = ASREngine(device="cpu")
+    diar_segments = task.get_diar_segments() or [{"start": 0.0, "end": 999999.0, "speaker": "UNKNOWN"}]
+
+    new_sentences = engine.build_sentences_from_chars(
+        chars=chars,
+        diar_segments=diar_segments,
+        mode="subtitle",
+        max_sentence_chars=req.max_sentence_chars,
+        force_cut_chars=req.force_cut_chars,
+        to_traditional=task.to_traditional if task.to_traditional else False,
+    )
+
+    task.set_sentences(new_sentences)
+    db.commit()
+
+    return {"message": "success", "sentences": new_sentences}
+
+
+# ============================================
+# 去除標點
+# ============================================
+
+
 class RemovePunctuationRequest(_BaseModel):
     mode: str = "all"  # "all" | "sentence_end"
+    replace_with_space: bool = False  # True: 以空格替換, False: 直接去除
 
 @router.post("/tasks/{task_id}/remove-punctuation")
 def remove_punctuation(
@@ -346,7 +392,10 @@ def remove_punctuation(
 
     # 定義標點集合
     all_punct = r'[，。！？、；：＂＇（）《》【】…—·,.:;!?\'"()\[\]{}~@#$%^&*+\-=/<>]'
-    sentence_end_punct = r'[。！？!?]'
+    # 句末標點：匹配字串最尾端的標點（含逗號、頓號、分號等）
+    sentence_end_punct = r'[，。！？、；：,.:;!?]+$'
+
+    replacement = ' ' if req.replace_with_space else ''
 
     updated = []
     for sent in sentences:
@@ -356,9 +405,13 @@ def remove_punctuation(
             sent["original_text"] = original
 
         if req.mode == "all":
-            cleaned = re.sub(all_punct, '', original)
+            cleaned = re.sub(all_punct, replacement, original)
         else:  # sentence_end
-            cleaned = re.sub(sentence_end_punct, '', original)
+            cleaned = re.sub(sentence_end_punct, replacement, original)
+
+        # 若以空格替換，清理多餘空格
+        if req.replace_with_space:
+            cleaned = re.sub(r' +', ' ', cleaned).strip()
 
         sent["text"] = cleaned
         updated.append(sent)

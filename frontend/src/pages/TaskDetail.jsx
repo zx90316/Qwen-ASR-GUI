@@ -25,6 +25,8 @@ export default function TaskDetail() {
     const [viewMode, setViewMode] = useState(null) // will be set after task loads
     const [exportOpen, setExportOpen] = useState(false)
     const exportRef = useRef(null)
+    const [maxSentenceChars, setMaxSentenceChars] = useState('30')
+    const [resegmenting, setResegmenting] = useState(false)
 
     const fetchTask = async () => {
         try {
@@ -40,6 +42,32 @@ export default function TaskDetail() {
             console.error(err)
         } finally {
             setLoading(false)
+        }
+    }
+
+    // ── 重新分句 ──
+    const handleResegment = async () => {
+        if (!id) return
+        setResegmenting(true)
+        try {
+            const resp = await fetchWithAuth(`/api/tasks/${id}/resegment`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    max_sentence_chars: parseInt(maxSentenceChars, 10),
+                    force_cut_chars: parseInt(maxSentenceChars, 10) + 20
+                })
+            })
+            if (!resp.ok) {
+                const err = await resp.json()
+                throw new Error(err.detail || '重新分句失敗')
+            }
+            const data = await resp.json()
+            setSentences(data.sentences)
+        } catch (e) {
+            alert(e.message)
+        } finally {
+            setResegmenting(false)
         }
     }
 
@@ -237,13 +265,15 @@ export default function TaskDetail() {
     }
 
     // ── 去除標點符號 ──
+    const [punctSpaceReplace, setPunctSpaceReplace] = useState(false)
+
     const handleRemovePunctuation = async (mode) => {
         if (!id) return
         try {
             const resp = await fetchWithAuth(`/api/tasks/${id}/remove-punctuation`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ mode })
+                body: JSON.stringify({ mode, replace_with_space: punctSpaceReplace })
             })
             if (resp.ok) {
                 const data = await resp.json()
@@ -498,6 +528,29 @@ export default function TaskDetail() {
 
                     {viewMode === 'sentences' && sentences && (
                         <div>
+                            {/* ── 重新分句工具 ── */}
+                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', margin: '0 0 12px 0', padding: '8px 12px', background: 'var(--color-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)' }}>
+                                <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>最大分句字數</span>
+                                <input
+                                    type="number"
+                                    min="10"
+                                    max="150"
+                                    className="form-input"
+                                    style={{ width: '60px', padding: '2px 8px', height: '28px', fontSize: '0.85rem' }}
+                                    value={maxSentenceChars}
+                                    onChange={e => setMaxSentenceChars(e.target.value)}
+                                />
+                                <button
+                                    className="btn btn-outline btn-sm"
+                                    style={{ padding: '2px 8px', height: '28px', fontSize: '0.8rem' }}
+                                    onClick={handleResegment}
+                                    disabled={resegmenting}
+                                >
+                                    {resegmenting ? '處理中' : '套用'}
+                                </button>
+                                <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>共 {sentences.length} 句</span>
+                            </div>
+
                             {/* ── LLM 工具列 ── */}
                             <div className="subsync-llm-toolbar" style={{ margin: '0 0 1rem 0', background: 'var(--color-surface)', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)' }}>
                                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
@@ -619,6 +672,10 @@ export default function TaskDetail() {
                                     disabled={llmProgress >= 0}>
                                     去除句末標點
                                 </button>
+                                <label style={{ fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--color-text-muted)', cursor: 'pointer' }}>
+                                    <input type="checkbox" checked={punctSpaceReplace} onChange={e => setPunctSpaceReplace(e.target.checked)} />
+                                    以空格替換
+                                </label>
                                 {sentences.some(s => s.original_text !== undefined) && (
                                     <button className="btn btn-outline btn-sm" style={{ fontSize: '0.75rem', color: 'var(--color-primary)', borderColor: 'var(--color-primary)' }}
                                         onClick={handleRevertPunctuation}

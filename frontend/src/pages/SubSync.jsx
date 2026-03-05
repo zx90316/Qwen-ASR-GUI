@@ -600,6 +600,48 @@ export default function SubSync() {
             })
         })
     }
+
+    // ── 去除標點符號 ──
+    const [punctSpaceReplace, setPunctSpaceReplace] = useState(false)
+
+    const handleRemovePunctuation = async (mode) => {
+        if (!taskId) return
+        try {
+            const resp = await fetchWithAuth(`/api/tasks/${taskId}/remove-punctuation`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode, replace_with_space: punctSpaceReplace })
+            })
+            if (resp.ok) {
+                const data = await resp.json()
+                setSentences(data.sentences)
+            }
+        } catch (e) {
+            console.error('去除標點失敗', e)
+        }
+    }
+
+    const handleRevertPunctuation = async () => {
+        const reverted = sentences.map(s => {
+            if (s.original_text !== undefined) {
+                return { ...s, text: s.original_text, original_text: undefined }
+            }
+            return s
+        }).map(s => {
+            const { original_text, ...rest } = s
+            return rest
+        })
+        setSentences(reverted)
+        try {
+            await fetchWithAuth('/api/llm/save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ task_id: taskId, task_type: 'asr', sentences: reverted })
+            })
+        } catch (e) {
+            console.error('儲存復原失敗', e)
+        }
+    }
     const handleDeleteHistory = async (e, id) => {
         e.stopPropagation()
         if (!confirm('確定要刪除此紀錄？')) return
@@ -1014,6 +1056,32 @@ export default function SubSync() {
                                         </div>
                                     )}
                                     {llmError && <div style={{ color: 'var(--color-danger)', fontSize: '0.8rem', width: '100%' }}>{llmError}</div>}
+                                </div>
+
+                                {/* ── 去除標點工具列 ── */}
+                                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', padding: '6px 10px', background: 'var(--color-bg)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', flexWrap: 'wrap' }}>
+                                    <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--color-text-muted)' }}>標點</span>
+                                    <button className="btn btn-outline btn-sm" style={{ fontSize: '0.72rem', padding: '2px 6px' }}
+                                        onClick={() => handleRemovePunctuation('all')}
+                                        disabled={llmProgress >= 0}>
+                                        去除全部
+                                    </button>
+                                    <button className="btn btn-outline btn-sm" style={{ fontSize: '0.72rem', padding: '2px 6px' }}
+                                        onClick={() => handleRemovePunctuation('sentence_end')}
+                                        disabled={llmProgress >= 0}>
+                                        去除句末
+                                    </button>
+                                    <label style={{ fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--color-text-muted)', cursor: 'pointer' }}>
+                                        <input type="checkbox" checked={punctSpaceReplace} onChange={e => setPunctSpaceReplace(e.target.checked)} />
+                                        以空格替換
+                                    </label>
+                                    {sentences.some(s => s.original_text !== undefined) && (
+                                        <button className="btn btn-outline btn-sm" style={{ fontSize: '0.72rem', padding: '2px 6px', color: 'var(--color-primary)', borderColor: 'var(--color-primary)' }}
+                                            onClick={handleRevertPunctuation}
+                                            disabled={llmProgress >= 0}>
+                                            ↩ 復原標點
+                                        </button>
+                                    )}
                                 </div>
                             </div>
 
