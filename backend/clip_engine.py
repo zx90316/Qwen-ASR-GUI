@@ -10,7 +10,7 @@ from typing import Any, Dict, Generator, List
 
 import torch
 
-from backend.ocr_engine import _call_ollama_ocr
+from backend.ocr_engine import _call_ollama_ocr, pdf_pages_to_images, _pil_to_base64
 
 try:
     import fitz  # PyMuPDF
@@ -65,41 +65,6 @@ def unload_clip_model():
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
     print("[CLIP] 模型已卸載，VRAM 已釋放")
-
-
-# ── PDF → PIL Images ──
-
-def pdf_pages_to_images(pdf_bytes: bytes, dpi: int = 150) -> List[Image.Image]:
-    """
-    將 PDF 每頁轉為 PIL Image 列表。
-    需要 PyMuPDF (fitz) 和 Pillow。
-    """
-    if fitz is None:
-        raise ImportError("PyMuPDF 未安裝，請執行 pip install PyMuPDF")
-    if Image is None:
-        raise ImportError("Pillow 未安裝，請執行 pip install Pillow")
-
-    images = []
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    try:
-        for page_num in range(len(doc)):
-            page = doc[page_num]
-            zoom = dpi / 72
-            mat = fitz.Matrix(zoom, zoom)
-            pix = page.get_pixmap(matrix=mat)
-            img = Image.open(io.BytesIO(pix.tobytes("png")))
-            images.append(img.convert("RGB"))
-    finally:
-        doc.close()
-    return images
-
-
-def _pil_to_base64(img: Image.Image, fmt: str = "PNG") -> str:
-    """將 PIL Image 轉為 base64 字串"""
-    buf = io.BytesIO()
-    img.save(buf, format=fmt)
-    return base64.b64encode(buf.getvalue()).decode("utf-8")
-
 
 # ── 核心比對 ──
 
