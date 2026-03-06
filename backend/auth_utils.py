@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-SECRET_KEY = os.getenv("SECRET_KEY", "qwen_asr_secret_key_change_me_in_prod")
+SECRET_KEY = os.getenv("SECRET_KEY", "omni_ai_secret_key_change_me_in_prod")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_DAYS = 30 # Token expires in 30 days
 SMTP_USER = os.getenv("SMTP_USER")
@@ -56,8 +56,8 @@ def send_verification_email(to_email: str, code: str):
         raise ValueError("SMTP_USER or SMTP_PASSWORD not configured in .env")
 
     msg = EmailMessage()
-    msg.set_content(f"您的 Qwen ASR 登入驗證碼為：{code}\n\n驗證碼 5 分鐘內有效。請勿將此驗證碼告訴他人。")
-    msg["Subject"] = "Qwen ASR 登入驗證碼"
+    msg.set_content(f"您的 Omni AI 登入驗證碼為：{code}\n\n驗證碼 5 分鐘內有效。請勿將此驗證碼告訴他人。")
+    msg["Subject"] = "Omni AI 登入驗證碼"
     msg["From"] = SMTP_USER
     msg["To"] = to_email
 

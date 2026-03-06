@@ -1,4 +1,4 @@
-# Qwen-ASR-GUI
+# Omni AI
 
 基於 [Qwen3-ASR](https://huggingface.co/Qwen/Qwen3-ASR-1.7B) 的全方位語音辨識與字幕製作工具，支援語者分離、繁體中文轉換、外部影片下載以及可視化的後台管理。
 
@@ -23,7 +23,7 @@
 
 ### 方式一：下載可執行檔（最簡單）
 
-前往 [GitHub Releases](https://github.com/zx90316/Qwen-ASR-GUI/releases) 下載最新的 `Qwen-ASR-Manager`，解壓縮後雙擊執行exe檔。程式會自動偵測環境，若不在專案目錄中將引導你自動 `git clone` 整個專案。
+前往 [GitHub Releases](https://github.com/zx90316/Omni-AI-GUI/releases) 下載最新的 `Omni-AI-Manager`，解壓縮後雙擊執行exe檔。程式會自動偵測環境，若不在專案目錄中將引導你自動 `git clone` 整個專案。
 
 ### 方式二：從原始碼啟動
 
@@ -67,7 +67,7 @@ HF_TOKEN=hf_your_token_here
 │   └── routers/           # API 路由 (任務/YouTube/LLM/認證)
 ├── requirements.txt       # Python 依賴清單
 ├── .env.example           # 環境變數範例檔
-└── qwen_asr.db            # SQLite 工作任務資料庫
+└── omni_ai.db            # SQLite 工作任務資料庫
 ```
 
 ## 📜 授權

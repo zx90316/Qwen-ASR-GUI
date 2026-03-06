@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 ASR 核心引擎
-封裝 Qwen ASR 轉錄、語者分離、合併邏輯，支援 GPU/CPU 與多模型切換。
+封裝 Omni AI 轉錄、語者分離、合併邏輯，支援 GPU/CPU 與多模型切換。
 
 重型 ML 套件（qwen_asr, opencc, pyannote）採用延遲匯入，
 讓 GUI 能快速啟動。

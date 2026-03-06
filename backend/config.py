@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Qwen-ASR-GUI 配置管理
+Omni AI 配置管理
 """
 import os
 from pathlib import Path

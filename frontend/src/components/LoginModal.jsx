@@ -79,7 +79,7 @@ export default function LoginModal() {
     return (
         <div className="login-modal-overlay">
             <div className="login-modal card">
-                <h2>🔐 Qwen ASR 登入</h2>
+                <h2>🔐 Omni AI 登入</h2>
                 <p>請輸入您的 Email 來收取驗證碼</p>
 
                 {error && <div className="login-error">{error}</div>}

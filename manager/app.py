@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Qwen-ASR-GUI 管理面板
+Omni AI 管理面板
 
 使用 ttkbootstrap 建立現代化的管理介面。
 """
@@ -77,7 +77,7 @@ class ManagerApp:
 
         # 建立主視窗
         self.root = ttk.Window(
-            title="Qwen-ASR-GUI Manager",
+            title="Omni AI Manager",
             themename=self.config.get("theme", "darkly"),
             size=(1100, 980),
             minsize=(900, 600),
@@ -725,7 +725,7 @@ class ManagerApp:
         # 更新系統資訊分頁
         info_lines = [
             "═" * 50,
-            "  Qwen-ASR-GUI Manager 系統資訊",
+            "  Omni AI Manager 系統資訊",
             "═" * 50,
             "",
             f"  📁 專案路徑:    {PROJECT_ROOT}",

@@ -6,6 +6,7 @@ import SubSync from './pages/SubSync.jsx'
 import OCR from './pages/OCR.jsx'
 import ClipSearch from './pages/ClipSearch.jsx'
 import ClipOcrWorkflow from './pages/ClipOcrWorkflow.jsx'
+import Semantic from './pages/Semantic.jsx'
 import LoginModal from './components/LoginModal.jsx'
 import { useAuth } from './context/AuthContext.jsx'
 
@@ -16,8 +17,8 @@ function Layout({ children }) {
         <div className="app-layout">
             <aside className="sidebar">
                 <div className="sidebar-brand">
-                    <h1>🎙 Qwen ASR</h1>
-                    <span>語音辨識平台</span>
+                    <h1>Omni AI</h1>
+                    <span>全能 AI 平台</span>
                 </div>
                 {token && (
                     <div className="user-info" style={{ padding: '0 1.5rem', marginBottom: '1rem', fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
@@ -77,6 +78,17 @@ function Layout({ children }) {
                             PDF擷取資料
                         </NavLink>
                     </div>
+
+                    <div className="nav-group">
+                        <div className="nav-group-label">語意工坊</div>
+                        <NavLink
+                            to="/semantic"
+                            className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
+                        >
+                            <span className="icon">🧠</span>
+                            語意與重排序
+                        </NavLink>
+                    </div>
                 </nav>
             </aside>
             <main className="main-content">
@@ -105,6 +117,7 @@ export default function App() {
                         <Route path="/ocr" element={<OCR />} />
                         <Route path="/clip-search" element={<ClipSearch />} />
                         <Route path="/clip-ocr" element={<ClipOcrWorkflow />} />
+                        <Route path="/semantic" element={<Semantic />} />
                     </Routes>
                 </Layout>
             )}

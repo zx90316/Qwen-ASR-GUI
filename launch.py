@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Qwen-ASR-GUI Manager — 啟動入口
+Omni AI Manager — 啟動入口
 
 使用系統 Python 執行，不需要 .venv。
 會自動安裝缺少的管理 GUI 依賴（ttkbootstrap, psutil）。
@@ -49,8 +49,8 @@ def auto_clone_setup():
         sys.exit(1)
 
     result = messagebox.askyesno(
-        "Qwen-ASR-GUI 自動設定",
-        "偵測到目前不在 Qwen-ASR-GUI 專案資料夾中。\n\n"
+        "Omni AI 自動設定",
+        "偵測到目前不在 Omni AI 專案資料夾中。\n\n"
         "是否要自動下載 (git clone) 整個專案，\n並將此管理面板移入專案資料夾中執行？",
         icon="info"
     )
@@ -76,12 +76,12 @@ def auto_clone_setup():
     y = progress_win.winfo_screenheight() // 2 - win_height // 2
     progress_win.geometry(f'{width}x{height}+{x}+{y}')
 
-    tk.Label(progress_win, text="正在下載 Qwen-ASR-GUI 專案檔案...", font=("", 12)).pack(pady=20)
+    tk.Label(progress_win, text="正在下載 Omni AI 專案檔案...", font=("", 12)).pack(pady=20)
     status_label = tk.Label(progress_win, text="請稍候，這可能需要一點時間...")
     status_label.pack()
 
     def do_clone():
-        clone_url = "https://github.com/zx90316/Qwen-ASR-GUI.git"
+        clone_url = "https://github.com/zx90316/Omni-AI-GUI.git"
         
         try:
             # 使用 init + fetch + reset 將專案拉取到當前資料夾（保留現有的 exe 與 _internal）
@@ -134,7 +134,7 @@ def ensure_dependencies():
 
     if missing:
         print("=" * 60)
-        print("  Qwen-ASR-GUI Manager")
+        print("  Omni AI Manager")
         print("  正在安裝必要的依賴套件...")
         print("=" * 60)
         for dep in missing:

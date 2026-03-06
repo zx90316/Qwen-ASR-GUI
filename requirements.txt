@@ -43,3 +43,6 @@ PyMuPDF
 
 # 以圖搜頁 (CLIP)
 Pillow
+
+# Semantic (Embedding & Reranking)
+FlagEmbedding 

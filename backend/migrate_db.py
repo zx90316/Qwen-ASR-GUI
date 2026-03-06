@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 
 DB_DIR = Path(__file__).resolve().parent.parent
-DB_PATH = DB_DIR / "qwen_asr.db"
+DB_PATH = DB_DIR / "omni_ai.db"
 
 def migrate():
     if not DB_PATH.exists():

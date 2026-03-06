@@ -13,7 +13,7 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 
 # ── 資料庫路徑 ──
 DB_DIR = Path(__file__).resolve().parent.parent
-DB_PATH = DB_DIR / "qwen_asr.db"
+DB_PATH = DB_DIR / "omni_ai.db"
 DATABASE_URL = f"sqlite:///{DB_PATH}"
 
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})

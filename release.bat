@@ -3,7 +3,7 @@ chcp 65001 >nul
 setlocal enabledelayedexpansion
 
 echo ============================================================
-echo   Qwen-ASR-GUI Manager - Build ^& Release Script
+echo   Omni AI Manager - Build ^& Release Script
 echo ============================================================
 echo.
 
@@ -32,7 +32,7 @@ if /i not "%CONFIRM%"=="y" (
 
 echo.
 echo [1/4] 正在使用 PyInstaller 建置...
-.venv\Scripts\pyinstaller --noconfirm --onedir --windowed --name "Qwen-ASR-Manager" --add-data "manager;manager" launch.py
+.venv\Scripts\pyinstaller --noconfirm --onedir --windowed --name "Omni-AI-Manager" --add-data "manager;manager" launch.py
 if errorlevel 1 (
     echo ❌ PyInstaller 建置失敗！
     pause
@@ -42,8 +42,8 @@ echo ✅ PyInstaller 建置完成
 
 echo.
 echo [2/4] 正在壓縮為 zip...
-if exist dist\Qwen-ASR-Manager.zip del /f dist\Qwen-ASR-Manager.zip
-powershell -Command "Compress-Archive -Path 'dist\Qwen-ASR-Manager' -DestinationPath 'dist\Qwen-ASR-Manager.zip' -Force"
+if exist dist\Omni-AI-Manager.zip del /f dist\Omni-AI-Manager.zip
+powershell -Command "Compress-Archive -Path 'dist\Omni-AI-Manager' -DestinationPath 'dist\Omni-AI-Manager.zip' -Force"
 if errorlevel 1 (
     echo ❌ 壓縮失敗！
     pause
@@ -60,7 +60,7 @@ echo ✅ Git 推送完成
 
 echo.
 echo [4/4] 正在發布 GitHub Release...
-gh release create %VERSION% dist\Qwen-ASR-Manager.zip -t "Qwen-ASR-GUI Manager %VERSION%" -n "%NOTES%"
+gh release create %VERSION% dist\Omni-AI-Manager.zip -t "Omni AI Manager %VERSION%" -n "%NOTES%"
 if errorlevel 1 (
     echo ❌ GitHub Release 發布失敗！
     pause
