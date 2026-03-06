@@ -16,6 +16,14 @@ try:
     from ttkbootstrap.constants import *
     from ttkbootstrap.scrolled import ScrolledText
 except ImportError:
+    if getattr(sys, 'frozen', False):
+        import tkinter.messagebox
+        import tkinter
+        root = tkinter.Tk()
+        root.withdraw()
+        tkinter.messagebox.showerror("模組缺失", "找不到 ttkbootstrap 模組，請在此環境中安裝後重新打包應用程式。")
+        sys.exit(1)
+
     print("=" * 60)
     print("  缺少 ttkbootstrap 套件，正在安裝...")
     print("=" * 60)
