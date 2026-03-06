@@ -3,14 +3,14 @@
 OCR 引擎 — 透過 Ollama glm-ocr 模型進行圖片/PDF OCR 辨識
 支援 PDF 自動分頁、重試機制、結構化 JSON 輸出
 """
-import base64
 import json
-import os
 import re
 import time
-from io import BytesIO
 from pathlib import Path
-from typing import Any, Dict, Generator, List, Optional, Tuple
+from typing import Any, Dict, Generator, List, Optional
+import base64
+import io
+from PIL import Image
 
 import requests
 
@@ -21,11 +21,11 @@ except ImportError:
 
 
 # ── 工具函式 ──
-
-def _image_to_base64(image_bytes: bytes) -> str:
-    """將圖片 bytes 轉為 base64 字串"""
-    return base64.b64encode(image_bytes).decode("utf-8")
-
+def _pil_to_base64(img: Image.Image, fmt: str = "PNG") -> str:
+    """將 PIL Image 轉為 base64 字串"""
+    buf = io.BytesIO()
+    img.save(buf, format=fmt)
+    return base64.b64encode(buf.getvalue()).decode("utf-8")
 
 def _detect_mime(filename: str) -> str:
     """依據副檔名回傳 MIME type"""
@@ -47,7 +47,11 @@ def build_ocr_prompt(fields: Dict[str, str]) -> str:
     """
     根據使用者提供的欄位名稱 + 預設值，建立 OCR 提示詞。
     fields 範例: {"製作日期": "YYYYMMDD", "報告編號": "", ...}
+    如果 fields 為空，則回傳純文字萃取的提示詞。
     """
+    if not fields:
+        return "OCR"
+        
     json_template = json.dumps(fields, ensure_ascii=False, indent=2)
     prompt = f"请按下列JSON格式输出图中信息:\n{json_template}"
     return prompt
@@ -89,10 +93,12 @@ def _call_ollama_ocr(
     ollama_host: str,
     model: str = "glm-ocr",
     max_retries: int = 3,
+    raw_mode: bool = False,
 ) -> Dict[str, Any]:
     """
     呼叫 Ollama 視覺模型進行 OCR。
-    含重試機制 (指數退避: 1s, 2s, 4s)。
+    若 raw_mode 為 True，則不嘗試解析 JSON，直接回傳 raw text。
+    若為 JSON 模式，含重試機制 (指數退避: 1s, 2s, 4s)。
     回傳 {"success": bool, "data": dict|None, "raw": str, "error": str|None}
     """
     url = f"{ollama_host}/api/chat"
@@ -120,6 +126,9 @@ def _call_ollama_ocr(
             data = resp.json()
             raw_text = data.get("message", {}).get("content", "").strip()
 
+            if raw_mode:
+                return {"success": True, "data": None, "raw": raw_text, "error": None}
+
             parsed = _parse_json_response(raw_text)
             if parsed is not None:
                 return {"success": True, "data": parsed, "raw": raw_text, "error": None}
@@ -130,6 +139,8 @@ def _call_ollama_ocr(
         except requests.exceptions.RequestException as e:
             last_error = f"Ollama 請求失敗: {e}"
             print(f"[OCR] {last_error} (嘗試 {attempt + 1}/{max_retries})")
+            
+            # 若為 raw_mode 且為請求錯誤，仍需重試；若是 parsing 失敗則不會發生因為 raw_mode 會直接 return
 
         if attempt < max_retries - 1:
             wait = 2 ** attempt  # 1s, 2s, 4s
@@ -140,10 +151,10 @@ def _call_ollama_ocr(
 
 # ── PDF 處理 ──
 
-def pdf_to_images(pdf_bytes: bytes, dpi: int = 200) -> List[bytes]:
+def pdf_to_images(pdf_bytes: bytes, dpi: int = 200) -> List[Image.Image]:
     """
-    將 PDF 每頁轉為 PNG bytes 列表。
-    需要 PyMuPDF (fitz) 套件。
+    將 PDF 每頁轉為 PIL Image 列表。
+    需要 PyMuPDF (fitz) 和 Pillow。
     """
     if fitz is None:
         raise ImportError("PyMuPDF 未安裝，請執行 pip install PyMuPDF")
@@ -157,7 +168,8 @@ def pdf_to_images(pdf_bytes: bytes, dpi: int = 200) -> List[bytes]:
             zoom = dpi / 72
             mat = fitz.Matrix(zoom, zoom)
             pix = page.get_pixmap(matrix=mat)
-            images.append(pix.tobytes("png"))
+            img = Image.open(io.BytesIO(pix.tobytes("png")))
+            images.append(img.convert("RGB"))
     finally:
         doc.close()
     return images
@@ -182,6 +194,7 @@ def process_file_stream(
     is_pdf = ext == ".pdf"
 
     prompt = build_ocr_prompt(fields)
+    raw_mode = len(fields) == 0
 
     if is_pdf:
         # PDF → 分頁處理
@@ -202,9 +215,11 @@ def process_file_stream(
                    "done": True, "error": "PDF 無頁面"}
             return
 
-        for i, img_bytes in enumerate(pages):
-            b64 = _image_to_base64(img_bytes)
-            result = _call_ollama_ocr(b64, prompt, ollama_host, model, max_retries)
+        for i, page_img in enumerate(pages):
+            # 保持原尺寸高品質進行 OCR 辨識
+            b64 = _pil_to_base64(page_img, "PNG")
+            
+            result = _call_ollama_ocr(b64, prompt, ollama_host, model, max_retries, raw_mode=raw_mode)
             percent = ((i + 1) / total) * 100
             yield {
                 "page": i + 1,
@@ -215,8 +230,15 @@ def process_file_stream(
             }
     else:
         # 單張圖片
-        b64 = _image_to_base64(file_bytes)
-        result = _call_ollama_ocr(b64, prompt, ollama_host, model, max_retries)
+        try:
+            page_img = Image.open(io.BytesIO(file_bytes)).convert("RGB")
+            # 保持原尺寸高品質進行 OCR 辨識
+            b64 = _pil_to_base64(page_img, "PNG")
+        except Exception as e:
+            yield {"page": 1, "total": 1, "percent": 100, "result": None, "done": True, "error": f"圖片解析失敗: {e}"}
+            return
+
+        result = _call_ollama_ocr(b64, prompt, ollama_host, model, max_retries, raw_mode=raw_mode)
         yield {
             "page": 1,
             "total": 1,

@@ -4,6 +4,7 @@ import NewTask from './pages/NewTask.jsx'
 import TaskDetail from './pages/TaskDetail.jsx'
 import SubSync from './pages/SubSync.jsx'
 import OCR from './pages/OCR.jsx'
+import ClipSearch from './pages/ClipSearch.jsx'
 import LoginModal from './components/LoginModal.jsx'
 import { useAuth } from './context/AuthContext.jsx'
 
@@ -25,35 +26,49 @@ function Layout({ children }) {
                     </div>
                 )}
                 <nav className="sidebar-nav">
-                    <NavLink
-                        to="/"
-                        end
-                        className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
-                    >
-                        <span className="icon">📋</span>
-                        任務清單
-                    </NavLink>
-                    <NavLink
-                        to="/new"
-                        className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
-                    >
-                        <span className="icon">➕</span>
-                        新增任務
-                    </NavLink>
-                    <NavLink
-                        to="/subsync"
-                        className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
-                    >
-                        <span className="icon">🎬</span>
-                        SubSync
-                    </NavLink>
-                    <NavLink
-                        to="/ocr"
-                        className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
-                    >
-                        <span className="icon">📄</span>
-                        OCR 辨識
-                    </NavLink>
+                    <div className="nav-group">
+                        <div className="nav-group-label">語音工坊 🎙</div>
+                        <NavLink
+                            to="/"
+                            end
+                            className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
+                        >
+                            <span className="icon">📋</span>
+                            任務清單
+                        </NavLink>
+                        <NavLink
+                            to="/new"
+                            className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
+                        >
+                            <span className="icon">➕</span>
+                            新增任務
+                        </NavLink>
+                        <NavLink
+                            to="/subsync"
+                            className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
+                        >
+                            <span className="icon">🎬</span>
+                            SubSync
+                        </NavLink>
+                    </div>
+
+                    <div className="nav-group">
+                        <div className="nav-group-label">視覺工坊 🖼</div>
+                        <NavLink
+                            to="/ocr"
+                            className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
+                        >
+                            <span className="icon">📄</span>
+                            OCR 辨識
+                        </NavLink>
+                        <NavLink
+                            to="/clip-search"
+                            className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
+                        >
+                            <span className="icon">🔍</span>
+                            以圖搜頁
+                        </NavLink>
+                    </div>
                 </nav>
             </aside>
             <main className="main-content">
@@ -80,6 +95,7 @@ export default function App() {
                         <Route path="/tasks/:id" element={<TaskDetail />} />
                         <Route path="/subsync" element={<SubSync />} />
                         <Route path="/ocr" element={<OCR />} />
+                        <Route path="/clip-search" element={<ClipSearch />} />
                     </Routes>
                 </Layout>
             )}

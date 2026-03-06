@@ -40,3 +40,6 @@ pydantic[email]
 
 # OCR (PDF 處理)
 PyMuPDF
+
+# 以圖搜頁 (CLIP)
+Pillow

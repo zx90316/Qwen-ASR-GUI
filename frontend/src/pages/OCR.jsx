@@ -3,7 +3,7 @@ import { fetchWithAuth } from '../utils/api.js'
 
 // 預設欄位範本
 const DEFAULT_FIELDS = [
-    { key: '製作日期', value: 'YYYYMMDD' },
+    { key: '製作日期', value: '' },
     { key: '報告編號', value: '' },
     { key: '報告類別', value: '' },
     { key: '申請者名稱', value: '' },
@@ -20,6 +20,9 @@ export default function OCR() {
     const [file, setFile] = useState(null)
     const [dragOver, setDragOver] = useState(false)
     const fileInputRef = useRef(null)
+
+    // 模式 (全文 vs 欄位)
+    const [extractionMode, setExtractionMode] = useState('fullText') // 'fullText' 或 'keywords'
 
     // 欄位
     const [fields, setFields] = useState(() => DEFAULT_FIELDS.map(f => ({ ...f })))
@@ -99,16 +102,16 @@ export default function OCR() {
             return
         }
 
-        // 過濾空 key
-        const validFields = fields.filter(f => f.key.trim())
-        if (validFields.length === 0) {
-            setError('請至少輸入一個欄位名稱')
-            return
+        // 檢查模式與欄位
+        let fieldsDict = {}
+        if (extractionMode === 'keywords') {
+            const validFields = fields.filter(f => f.key.trim())
+            if (validFields.length === 0) {
+                setError('請至少輸入一個欄位名稱')
+                return
+            }
+            validFields.forEach(f => { fieldsDict[f.key.trim()] = f.value })
         }
-
-        // 建立 fields dict
-        const fieldsDict = {}
-        validFields.forEach(f => { fieldsDict[f.key.trim()] = f.value })
 
         setProcessing(true)
         setProgress(0)
@@ -186,9 +189,11 @@ export default function OCR() {
     // ── 複製/匯出 ──
     const copyAllResults = async () => {
         const allData = results
-            .filter(r => r.success && r.data)
-            .map(r => r.data)
-        const text = JSON.stringify(allData.length === 1 ? allData[0] : allData, null, 2)
+            .filter(r => r.success)
+            .map(r => r.data || r.raw)
+        const text = extractionMode === 'fullText'
+            ? allData.join('\n\n---\n\n')
+            : JSON.stringify(allData.length === 1 ? allData[0] : allData, null, 2)
         try {
             await navigator.clipboard.writeText(text)
             setCopied(true)
@@ -198,14 +203,19 @@ export default function OCR() {
 
     const exportJSON = () => {
         const allData = results
-            .filter(r => r.success && r.data)
-            .map(r => r.data)
-        const text = JSON.stringify(allData.length === 1 ? allData[0] : allData, null, 2)
-        const blob = new Blob([text], { type: 'application/json' })
+            .filter(r => r.success)
+            .map(r => r.data || r.raw)
+        const text = extractionMode === 'fullText'
+            ? allData.join('\n\n---\n\n')
+            : JSON.stringify(allData.length === 1 ? allData[0] : allData, null, 2)
+        const blobType = extractionMode === 'fullText' ? 'text/plain' : 'application/json'
+        const ext = extractionMode === 'fullText' ? 'txt' : 'json'
+
+        const blob = new Blob([text], { type: blobType })
         const url = URL.createObjectURL(blob)
         const a = document.createElement('a')
         a.href = url
-        a.download = `ocr_result_${Date.now()}.json`
+        a.download = `ocr_result_${Date.now()}.${ext}`
         a.click()
         URL.revokeObjectURL(url)
     }
@@ -220,7 +230,7 @@ export default function OCR() {
 
             {/* ── 輸入區 ── */}
             {!processing && results.length === 0 && (
-                <div className="ocr-layout">
+                <div className={`ocr-layout ${extractionMode === 'fullText' ? 'ocr-layout-full' : ''}`}>
                     {/* 左側 — 上傳 & 設定 */}
                     <div className="ocr-upload-section">
                         <div className="card">
@@ -267,6 +277,17 @@ export default function OCR() {
                                     />
                                 </div>
                                 <div className="form-group">
+                                    <label className="form-label">擷取模式</label>
+                                    <select
+                                        className="form-select"
+                                        value={extractionMode}
+                                        onChange={e => setExtractionMode(e.target.value)}
+                                    >
+                                        <option value="fullText">📝 全文擷取</option>
+                                        <option value="keywords">🏷️ 欄位萃取</option>
+                                    </select>
+                                </div>
+                                <div className="form-group">
                                     <label className="form-label">重試次數</label>
                                     <select
                                         className="form-select"
@@ -282,55 +303,57 @@ export default function OCR() {
                         </div>
                     </div>
 
-                    {/* 右側 — 欄位編輯器 */}
-                    <div className="ocr-fields-section">
-                        <div className="card">
-                            <div className="ocr-fields-header">
-                                <h3 className="ocr-section-title">🏷️ 擷取欄位</h3>
-                                <div className="ocr-fields-actions">
-                                    <button className="btn btn-outline btn-sm" onClick={loadTemplate}>
-                                        載入範本
-                                    </button>
-                                    <button className="btn btn-outline btn-sm" onClick={clearFields}>
-                                        清空
-                                    </button>
-                                </div>
-                            </div>
-                            <p className="ocr-fields-hint">定義要從圖片中擷取的欄位名稱與預設值（預設值可留空）</p>
-
-                            <div className="ocr-fields-list">
-                                {fields.map((field, index) => (
-                                    <div key={index} className="ocr-field-row">
-                                        <input
-                                            type="text"
-                                            className="form-input ocr-field-key"
-                                            placeholder="欄位名稱"
-                                            value={field.key}
-                                            onChange={e => updateField(index, 'key', e.target.value)}
-                                        />
-                                        <input
-                                            type="text"
-                                            className="form-input ocr-field-value"
-                                            placeholder="預設值（選填）"
-                                            value={field.value}
-                                            onChange={e => updateField(index, 'value', e.target.value)}
-                                        />
-                                        <button
-                                            className="btn btn-outline btn-sm ocr-field-remove"
-                                            onClick={() => removeField(index)}
-                                            title="移除此欄位"
-                                        >
-                                            ✕
+                    {/* 右側 — 欄位編輯器 (僅在「欄位萃取」模式下顯示) */}
+                    {extractionMode === 'keywords' && (
+                        <div className="ocr-fields-section">
+                            <div className="card">
+                                <div className="ocr-fields-header">
+                                    <h3 className="ocr-section-title">🏷️ 擷取欄位</h3>
+                                    <div className="ocr-fields-actions">
+                                        <button className="btn btn-outline btn-sm" onClick={loadTemplate}>
+                                            載入範本
+                                        </button>
+                                        <button className="btn btn-outline btn-sm" onClick={clearFields}>
+                                            清空
                                         </button>
                                     </div>
-                                ))}
-                            </div>
+                                </div>
+                                <p className="ocr-fields-hint">定義要從圖片中擷取的欄位名稱與預設值（預設值可留空）</p>
 
-                            <button className="btn btn-outline btn-sm" onClick={addField} style={{ marginTop: '12px' }}>
-                                ➕ 新增欄位
-                            </button>
+                                <div className="ocr-fields-list">
+                                    {fields.map((field, index) => (
+                                        <div key={index} className="ocr-field-row">
+                                            <input
+                                                type="text"
+                                                className="form-input ocr-field-key"
+                                                placeholder="欄位名稱"
+                                                value={field.key}
+                                                onChange={e => updateField(index, 'key', e.target.value)}
+                                            />
+                                            <input
+                                                type="text"
+                                                className="form-input ocr-field-value"
+                                                placeholder="預設值（選填）"
+                                                value={field.value}
+                                                onChange={e => updateField(index, 'value', e.target.value)}
+                                            />
+                                            <button
+                                                className="btn btn-outline btn-sm ocr-field-remove"
+                                                onClick={() => removeField(index)}
+                                                title="移除此欄位"
+                                            >
+                                                ✕
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                <button className="btn btn-outline btn-sm" onClick={addField} style={{ marginTop: '12px' }}>
+                                    ➕ 新增欄位
+                                </button>
+                            </div>
                         </div>
-                    </div>
+                    )}
                 </div>
             )}
 
@@ -347,7 +370,7 @@ export default function OCR() {
                     <button
                         className="btn btn-primary btn-lg"
                         onClick={handleSubmit}
-                        disabled={!file || fields.filter(f => f.key.trim()).length === 0}
+                        disabled={!file || (extractionMode === 'keywords' && fields.filter(f => f.key.trim()).length === 0)}
                     >
                         🔍 開始辨識
                     </button>
@@ -382,10 +405,10 @@ export default function OCR() {
                         <h3>辨識結果</h3>
                         <div className="ocr-results-actions">
                             <button className="btn btn-outline btn-sm" onClick={copyAllResults}>
-                                {copied ? '✅ 已複製' : '📋 複製 JSON'}
+                                {copied ? '✅ 已複製' : (extractionMode === 'fullText' ? '📋 複製全文' : '📋 複製 JSON')}
                             </button>
                             <button className="btn btn-outline btn-sm" onClick={exportJSON}>
-                                💾 匯出 JSON
+                                💾 匯出 {extractionMode === 'fullText' ? 'TXT' : 'JSON'}
                             </button>
                             <button className="btn btn-primary btn-sm" onClick={() => { setResults([]); setProgress(0); setError('') }}>
                                 🔄 重新辨識
@@ -415,9 +438,11 @@ export default function OCR() {
                                     </div>
                                 ) : (
                                     <div className="ocr-result-raw">
-                                        <p className="text-muted" style={{ fontSize: '0.85rem' }}>
-                                            {r.error || '無法解析回覆'}
-                                        </p>
+                                        {!r.success && (
+                                            <p className="text-muted" style={{ fontSize: '0.85rem' }}>
+                                                {r.error || '無法解析回覆'}
+                                            </p>
+                                        )}
                                         {r.raw && (
                                             <pre className="ocr-raw-text">{r.raw}</pre>
                                         )}

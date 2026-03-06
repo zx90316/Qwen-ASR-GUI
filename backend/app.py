@@ -11,6 +11,7 @@ from backend.routers.youtube import router as youtube_router
 from backend.routers.llm import router as llm_router
 from backend.routers.auth import router as auth_router
 from backend.routers.ocr import router as ocr_router
+from backend.routers.clip_search import router as clip_search_router
 
 app = FastAPI(
     title="Qwen ASR API",
@@ -33,6 +34,7 @@ app.include_router(youtube_router)
 app.include_router(llm_router)
 app.include_router(auth_router)
 app.include_router(ocr_router)
+app.include_router(clip_search_router)
 
 
 @app.on_event("startup")
