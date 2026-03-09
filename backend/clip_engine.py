@@ -10,7 +10,7 @@ from typing import Any, Dict, Generator, List
 
 import torch
 
-from backend.ocr_engine import _call_ollama_ocr, pdf_pages_to_images, _pil_to_base64
+from backend.ocr_engine import _call_glm_ocr, pdf_pages_to_images, _pil_to_base64
 
 try:
     import fitz  # PyMuPDF
@@ -232,7 +232,7 @@ def search_similar_pages(
             }
             
             # 使用高解析度圖片呼叫 OCR
-            ocr_result = _call_ollama_ocr(img_b64, ocr_prompt, ollama_host, model="glm-ocr", max_retries=2, raw_mode=True)
+            ocr_result = _call_glm_ocr(img_b64, ocr_prompt, raw_mode=True)
             
             # 因為我們設定 raw_mode=True，原始回覆一定在 raw 中。
             page_text = ocr_result.get("raw", "").lower()

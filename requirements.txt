@@ -48,3 +48,6 @@ Pillow
 FlagEmbedding 
 
 ttkbootstrap
+
+# glm-ocr (輕量化安裝)
+-e backend/glm-ocr

@@ -13,7 +13,7 @@ from fastapi.responses import StreamingResponse
 
 from backend.auth_utils import get_current_user
 from backend.clip_engine import search_similar_pages
-from backend.ocr_engine import build_ocr_prompt, _call_ollama_ocr
+from backend.ocr_engine import build_ocr_prompt, _call_glm_ocr
 
 router = APIRouter(prefix="/api/workflow", tags=["workflow"])
 
@@ -30,8 +30,6 @@ async def clip_ocr_top1(
     must_exclude: str = Form(""),
     threshold: float = Form(0.5),
     fields: str = Form(...),
-    model: str = Form("glm-ocr"),
-    max_retries: int = Form(3),
     current_user: dict = Depends(get_current_user),
 ):
     # PDF check
@@ -111,12 +109,9 @@ async def clip_ocr_top1(
         await asyncio.sleep(0.01)
 
         b64_image = top_page_data["image_base64"]
-        ocr_result = _call_ollama_ocr(
+        ocr_result = _call_glm_ocr(
             image_base64=b64_image,
             prompt=prompt,
-            ollama_host=ollama_host,
-            model=model,
-            max_retries=max_retries,
             raw_mode=raw_mode
         )
 

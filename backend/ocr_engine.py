@@ -11,8 +11,14 @@ from typing import Any, Dict, Generator, List, Optional
 import base64
 import io
 from PIL import Image
+import io
+import os
+from PIL import Image
 
-import requests
+try:
+    from glmocr import GlmOcr
+except ImportError:
+    GlmOcr = None
 
 try:
     import fitz  # PyMuPDF
@@ -111,66 +117,55 @@ def _parse_json_response(text: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def _call_ollama_ocr(
+def _call_glm_ocr(
     image_base64: str,
     prompt: str,
-    ollama_host: str,
-    model: str = "glm-ocr",
-    max_retries: int = 3,
     raw_mode: bool = False,
 ) -> Dict[str, Any]:
     """
-    呼叫 Ollama 視覺模型進行 OCR。
-    若 raw_mode 為 True，則不嘗試解析 JSON，直接回傳 raw text。
-    若為 JSON 模式，含重試機制 (指數退避: 1s, 2s, 4s)。
+    呼叫本地 glmocr 進行 OCR 辨識。
     回傳 {"success": bool, "data": dict|None, "raw": str, "error": str|None}
     """
-    url = f"{ollama_host}/api/chat"
-    payload = {
-        "model": model,
-        "messages": [
-            {
-                "role": "user",
-                "content": prompt,
-                "images": [image_base64],
-            }
-        ],
-        "stream": False,
-        "options": {
-            "temperature": 0.1,
-            "num_predict": 2048,
-        },
-    }
+    if GlmOcr is None:
+        return {"success": False, "data": None, "raw": "", "error": "glmocr module not found. 請先執行安裝。"}
+    
+    # 建構 data URI 格式
+    data_uri = f"data:image/png;base64,{image_base64}"
+    
+    # 建立 Config 並覆寫 model 為 glm-ocr:latest 
+    # 初始化 GlmOcr 
+    config_path = str(Path(__file__).parent / "config.yaml")
 
-    last_error = None
-    for attempt in range(max_retries):
-        try:
-            resp = requests.post(url, json=payload, timeout=120)
-            resp.raise_for_status()
-            data = resp.json()
-            raw_text = data.get("message", {}).get("content", "").strip()
-
-            if raw_mode:
-                return {"success": True, "data": None, "raw": raw_text, "error": None}
-
-            parsed = _parse_json_response(raw_text)
+    try:
+        # 強制在此環境中將提示詞附加進去 (MaaS mode disabled, OCR via local config)
+        parser = GlmOcr(config_path=config_path)
+        
+        # Override default prompt in runtime
+        parser._pipeline.page_loader.default_prompt = prompt
+        
+        # 進行解析
+        results = parser.parse(data_uri)
+        
+        # 提取結果
+        json_res = results.json_result
+        md_res = results.markdown_result
+        
+        # 若需要 JSON 格式
+        if not raw_mode:
+            # 嘗試直接從 markdown 或 config 的結構提取出 JSON
+            # GlmOCR 返回的 json_result 並非我們的 `fields` 結構，所以我們還是以 markdown 解析為主，
+            # 若 model 回應了 markdown 內的 json block
+            parsed = _parse_json_response(md_res)
             if parsed is not None:
-                return {"success": True, "data": parsed, "raw": raw_text, "error": None}
+                return {"success": True, "data": parsed, "raw": md_res, "error": None}
             else:
-                # 解析失敗但有回覆 → 再試一次
-                last_error = f"JSON 解析失敗 (嘗試 {attempt + 1}/{max_retries})"
-                print(f"[OCR] {last_error}, 原始回覆: {raw_text[:200]}")
-        except requests.exceptions.RequestException as e:
-            last_error = f"Ollama 請求失敗: {e}"
-            print(f"[OCR] {last_error} (嘗試 {attempt + 1}/{max_retries})")
-            
-            # 若為 raw_mode 且為請求錯誤，仍需重試；若是 parsing 失敗則不會發生因為 raw_mode 會直接 return
+                return {"success": True, "data": None, "raw": md_res, "error": "JSON 解析失敗"}
+        else:
+            return {"success": True, "data": None, "raw": md_res, "error": None}
 
-        if attempt < max_retries - 1:
-            wait = 2 ** attempt  # 1s, 2s, 4s
-            time.sleep(wait)
+    except Exception as e:
+        return {"success": False, "data": None, "raw": "", "error": f"glmocr 解析失敗: {e}"}
 
-    return {"success": False, "data": None, "raw": "", "error": last_error}
 
 
 # ── PDF 處理 ──
@@ -243,7 +238,7 @@ def process_file_stream(
             # 保持原尺寸高品質進行 OCR 辨識
             b64 = _pil_to_base64(page_img, "PNG")
             
-            result = _call_ollama_ocr(b64, prompt, ollama_host, model, max_retries, raw_mode=raw_mode)
+            result = _call_glm_ocr(b64, prompt, raw_mode=raw_mode)
             percent = ((i + 1) / total) * 100
             yield {
                 "page": i + 1,
@@ -261,8 +256,7 @@ def process_file_stream(
         except Exception as e:
             yield {"page": 1, "total": 1, "percent": 100, "result": None, "done": True, "error": f"圖片解析失敗: {e}"}
             return
-
-        result = _call_ollama_ocr(b64, prompt, ollama_host, model, max_retries, raw_mode=raw_mode)
+        result = _call_glm_ocr(b64, prompt, raw_mode=raw_mode)
         yield {
             "page": 1,
             "total": 1,
