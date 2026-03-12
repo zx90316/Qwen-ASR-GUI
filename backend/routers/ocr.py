@@ -9,7 +9,12 @@ from typing import Optional
 
 from fastapi import APIRouter, File, Form, UploadFile, HTTPException
 from fastapi.responses import StreamingResponse
-from backend.ocr_engine import process_file_stream
+from backend.ocr_engine import (
+    process_file_stream,
+    merge_page_results,
+    get_correction_map,
+    update_correction_map,
+)
 
 router = APIRouter(prefix="/api/ocr", tags=["ocr"])
 
@@ -23,6 +28,7 @@ async def ocr_process(
     fields: str = Form(...),
     model: str = Form("glm-ocr"),
     max_retries: int = Form(3),
+    auto_merge: bool = Form(False),
 ):
     """
     上傳圖片或 PDF 進行 OCR 辨識。
@@ -31,6 +37,7 @@ async def ocr_process(
     - fields: JSON 字串，定義要擷取的欄位，例如 {"製作日期": "YYYYMMDD", "報告編號": ""}
     - model: Ollama 模型名稱，預設 glm-ocr
     - max_retries: 最大重試次數，預設 3
+    - auto_merge: 是否自動合併多頁結果，預設 False
     """
     # 驗證檔案類型
     import pathlib
@@ -59,6 +66,7 @@ async def ocr_process(
     # SSE Generator
     async def event_generator():
         results = []
+        page_data_list = []
         gen = process_file_stream(
             file_bytes=file_bytes,
             filename=file.filename or "upload",
@@ -93,9 +101,14 @@ async def ocr_process(
             }
             results.append({**page_data})
 
+            if result["data"] is not None:
+                page_data_list.append(result["data"])
+
             if item["done"]:
                 # 最後一筆：附帶所有結果
                 page_data["all_results"] = results
+                if auto_merge and len(page_data_list) > 1:
+                    page_data["merged"] = merge_page_results(page_data_list)
 
             yield f"data: {json.dumps(page_data, ensure_ascii=False)}\n\n"
 
@@ -103,3 +116,18 @@ async def ocr_process(
             await asyncio.sleep(0.01)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+# ── 形近字修正字典管理 API ──
+
+@router.get("/correction-map")
+async def get_map():
+    """取得目前的形近字修正字典"""
+    return get_correction_map()
+
+
+@router.put("/correction-map")
+async def put_map(payload: dict):
+    """整體替換形近字修正字典"""
+    update_correction_map(payload)
+    return {"ok": True, "count": len(payload)}

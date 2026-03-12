@@ -1,19 +1,20 @@
 # -*- coding: utf-8 -*-
 """
 OCR 引擎 — 透過 Ollama glm-ocr 模型進行圖片/PDF OCR 辨識
-支援 PDF 自動分頁、重試機制、結構化 JSON 輸出
+支援 PDF 自動分頁、重試機制、結構化 JSON 輸出、簡繁轉換與形近字修正
 """
 import json
 import re
 import time
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Dict, Generator, List, Optional
 import base64
 import io
-from PIL import Image
-import io
 import os
+
 from PIL import Image
+from opencc import OpenCC
 
 try:
     from glmocr import GlmOcr
@@ -24,6 +25,94 @@ try:
     import fitz  # PyMuPDF
 except ImportError:
     fitz = None
+
+
+# ── 後處理：簡繁轉換 + 形近字修正 ──
+
+_cc = OpenCC('s2t')
+
+_CORRECTION_MAP_PATH = Path(__file__).parent / "ocr_correction_map.json"
+
+
+def load_correction_map() -> Dict[str, str]:
+    """從 JSON 檔載入形近字修正字典，若檔案不存在則回傳空字典"""
+    if _CORRECTION_MAP_PATH.exists():
+        with open(_CORRECTION_MAP_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+
+def save_correction_map(mapping: Dict[str, str]) -> None:
+    """將形近字修正字典寫回 JSON 檔"""
+    with open(_CORRECTION_MAP_PATH, "w", encoding="utf-8") as f:
+        json.dump(mapping, f, ensure_ascii=False, indent=2)
+
+
+_correction_map: Dict[str, str] = load_correction_map()
+
+
+def get_correction_map() -> Dict[str, str]:
+    return dict(_correction_map)
+
+
+def update_correction_map(new_map: Dict[str, str]) -> None:
+    """更新記憶體中與磁碟上的修正字典"""
+    global _correction_map
+    _correction_map = dict(new_map)
+    save_correction_map(_correction_map)
+
+
+def postprocess_value(text: str) -> str:
+    """對單一字串執行：簡體→繁體 → 形近字修正"""
+    if not text or not text.strip():
+        return ""
+    text = _cc.convert(text.strip())
+    for wrong, right in _correction_map.items():
+        text = text.replace(wrong, right)
+    return text
+
+
+def postprocess_result(data: Dict[str, Any]) -> Dict[str, Any]:
+    """對整份 OCR 結果 dict 的 key 與 value 都套用後處理"""
+    if not isinstance(data, dict):
+        return data
+    corrected: Dict[str, Any] = {}
+    for key, value in data.items():
+        new_key = postprocess_value(key)
+        new_value = postprocess_value(str(value)) if isinstance(value, str) else value
+        corrected[new_key] = new_value
+    return corrected
+
+
+def merge_page_results(all_page_data: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    合併多頁 OCR 結果（已經過後處理）。
+    規則：
+      - 忽略空值
+      - 所有非空值一致 → 取該值
+      - 出現不同非空值 → 清除為空字串
+      - 全部空值 → 空字串
+    """
+    field_values: Dict[str, List[str]] = OrderedDict()
+
+    for page_data in all_page_data:
+        if not isinstance(page_data, dict):
+            continue
+        for key, value in page_data.items():
+            if key not in field_values:
+                field_values[key] = []
+            v = str(value).strip() if value else ""
+            if v:
+                field_values[key].append(v)
+
+    merged: Dict[str, str] = OrderedDict()
+    for key, values in field_values.items():
+        if not values:
+            merged[key] = ""
+        else:
+            unique = set(values)
+            merged[key] = values[0] if len(unique) == 1 else ""
+    return merged
 
 
 # ── 工具函式 ──
@@ -157,11 +246,12 @@ def _call_glm_ocr(
             # 若 model 回應了 markdown 內的 json block
             parsed = _parse_json_response(md_res)
             if parsed is not None:
+                parsed = postprocess_result(parsed)
                 return {"success": True, "data": parsed, "raw": md_res, "error": None}
             else:
                 return {"success": True, "data": None, "raw": md_res, "error": "JSON 解析失敗"}
         else:
-            return {"success": True, "data": None, "raw": md_res, "error": None}
+            return {"success": True, "data": None, "raw": postprocess_value(md_res), "error": None}
 
     except Exception as e:
         return {"success": False, "data": None, "raw": "", "error": f"glmocr 解析失敗: {e}"}

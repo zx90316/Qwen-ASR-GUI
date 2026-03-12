@@ -49,5 +49,8 @@ FlagEmbedding
 
 ttkbootstrap
 
+# OCR 後處理
+opencc
+
 # glm-ocr (輕量化安裝)
 -e backend/glm-ocr
